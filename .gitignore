@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+frontend/dist/
+.pytest_cache/
+.ruff_cache/
+qdrant_storage/
+.DS_Store
+.idea/
+.vscode/
+# big files never go in git (see CLAUDE.md rule 5)
+*.pt
+*.h5
+*.keras
+*.onnx
+*.pkl
+*.safetensors
+*.gguf
+*.mp4
+*.mov
+runs/
