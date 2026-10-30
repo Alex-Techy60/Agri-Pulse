@@ -32,6 +32,20 @@ ROUTER_PROMPT = (Path(__file__).parent.parent / "llm" / "prompts" / "router.md")
 LANG_NAMES = {"en": "English", "hi": "Hindi", "mr": "Marathi", "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi", "kn": "Kannada", "ml": "Malayalam"}
 
 
+# Unicode block -> language, used only when the router LLM is down (Devanagari defaults to Hindi; Marathi shares the script).
+SCRIPT_LANG = [("\u0900", "\u097f", "hi"), ("\u0980", "\u09ff", "bn"), ("\u0a00", "\u0a7f", "pa"), ("\u0a80", "\u0aff", "gu"),
+               ("\u0b80", "\u0bff", "ta"), ("\u0c00", "\u0c7f", "te"), ("\u0c80", "\u0cff", "kn"), ("\u0d00", "\u0d7f", "ml")]
+
+
+def script_lang(text: str) -> str:
+    counts: dict[str, int] = {}
+    for ch in text:
+        for lo, hi, code in SCRIPT_LANG:
+            if lo <= ch <= hi:
+                counts[code] = counts.get(code, 0) + 1
+    return max(counts, key=counts.get) if counts else "en"
+
+
 @dataclass
 class TraceStep:
     agent: str
@@ -262,7 +276,7 @@ class Orchestrator:
             sc = sum(1 for k in i.keywords if k in low)
             if sc > score:
                 best, score = i, sc
-        return best, language or "en", "keyword fallback", True
+        return best, language or script_lang(text), "keyword fallback", True
 
     def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str) -> list[dict]:
         system = (
