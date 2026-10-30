@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.tools import NeedsInput
 from app.tools.http import get_json
 from app.tools.mandi import API, mandi
+from app.tools.rain_history import rain_history
 from app.tools.weather import weather
 
 
@@ -20,7 +21,7 @@ def main() -> int:
     bad = 0
     print(f"Place={place!r} Crop={crop!r}\n")
 
-    for name, tool in (("weather + soil (Open-Meteo)", weather), ("mandi prices (data.gov.in)", mandi)):
+    for name, tool in (("weather + soil (Open-Meteo)", weather), ("rain history (Open-Meteo)", rain_history), ("mandi prices (data.gov.in)", mandi)):
         try:
             r = tool("", {"place": place, "crop": crop})
             print(("PASS " if r.ok else "FAIL ") + name)
