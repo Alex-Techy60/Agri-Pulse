@@ -116,8 +116,11 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         )
     else:
         lines.append(f"SIGNAL: INSUFFICIENT_DATA ({sig['points']} days of prices; need 3). Report the latest prices only.")
+    district_label = loc.get("district") or loc["name"]
     if near:
-        lines.append(f"MARKETS in {loc.get('district') or loc['name']} on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f}" for m in near))
+        lines.append(f"MARKETS in {district_label} on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f}" for m in near))
+    elif top:  # small town / district with no reporting mandi: say so, then show the state's markets instead
+        lines.append(f"NOTE: no markets reporting {commodity} in {district_label} on {latest_date}. Tell the farmer this, and that the prices below are from other markets in {where}.")
     if top:
         lines.append(f"HIGHEST MARKETS in {where} on {latest_date}: " + "; ".join(f"{m['market']} ({m['district']}) Rs {m['modal']:.0f}" for m in top))
 

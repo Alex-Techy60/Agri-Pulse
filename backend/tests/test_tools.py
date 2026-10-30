@@ -110,3 +110,20 @@ def test_place_not_found_is_graceful():
     install(lambda url, p: {"results": []})
     r = weather_mod.weather("", {"place": "Nowhereville"})
     assert not r.ok and "place not found" in r.text
+
+
+def test_mandi_district_without_markets_falls_back_to_state_and_says_so():
+    # Records exist for Maharashtra but none in the farmer's district (Satara): state-level markets + an explicit note.
+    def routes(url, params):
+        if "geocoding" in url:
+            return {"results": [{"name": "Satara", "latitude": 17.7, "longitude": 74.0, "admin1": "Maharashtra", "admin2": "Satara", "country_code": "IN"}]}
+        d = params.get("filters[Arrival_Date]") or params.get("filters[arrival_date]")
+        if "filters[State]" not in params:
+            return {"records": []}
+        offset = (dt.date.today() - dt.datetime.strptime(d, "%d/%m/%Y").date()).days
+        return {"records": mandi_records({d: [2000, 2100]})} if offset in (0, 1, 2) else {"records": []}
+
+    install(routes)
+    r = mandi_mod.mandi("", {"place": "Satara", "crop": "onion"})
+    assert r.ok and "NOTE: no markets reporting Onion in Satara" in r.text and "HIGHEST MARKETS in Maharashtra" in r.text
+    assert "MARKETS in Satara" not in r.text and r.cards[0]["markets"]
