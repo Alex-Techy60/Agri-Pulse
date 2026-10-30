@@ -1,7 +1,7 @@
 """Crop-specific rules. ONLY values read in a primary source are here; every rule carries its citation.
 
 Onion has no rule on purpose: the ICAR-DOGR season table could not be read (site unreachable) and the
-secondary sources disagreed (bulbing 20-25 C vs 21-30 C). No source, no rule (CLAUDE.md rule 3).
+secondary sources disagreed (bulbing 20-25 C vs 21-30 C). No source, no rule.
 """
 from __future__ import annotations
 

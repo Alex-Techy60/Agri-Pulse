@@ -2,7 +2,7 @@
 
     tool(text: str, profile: dict) -> ToolResult
 
-Rules (CLAUDE.md): tools return REAL data from a live source or an explicit
+Rules: tools return REAL data from a live source or an explicit
 failure. They never invent values. Recoverable problems are expressed as
 exceptions that `guarded()` turns into a clear ToolResult(ok=False):
 

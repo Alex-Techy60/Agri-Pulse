@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "KisaanMitra"
     domain: str = "farm"  # which module in app/domain/ to load
 
-    # --- Live data sources (NO dummy data: see CLAUDE.md) --------------------
+    # --- Live data sources (NO dummy data: every value must come from a live source) --------------------
     data_gov_api_key: str = ""  # free key from data.gov.in (mandi prices)
     mandi_resource_id: str = "9ef84268-d588-465a-a308-a864a43d0070"  # confirm with `make check-live`
     mandi_filter_style: str = "auto"  # auto | lower | title  (data.gov.in field-name case)

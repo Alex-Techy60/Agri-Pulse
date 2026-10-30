@@ -4,7 +4,7 @@
 
 KisaanMitra turns a farmer's *place + crop* into a clear, spoken decision — **sell now, hold, spray today, skip irrigation, protect the crop** — using only **live** data: Open-Meteo (weather, soil moisture) and data.gov.in/Agmarknet (mandi prices). Risk flags and the sell/hold signal are computed by deterministic code; the LLM only explains them in the farmer's language, and a guardrail rejects any number that is not in the tool output. If a source is down it says so — it never invents data.
 
-Start here → [`START_HERE.md`](START_HERE.md) · [`CLAUDE.md`](CLAUDE.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SOURCES.md`](docs/SOURCES.md) · [`PLAN.md`](PLAN.md)
+Docs → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/CONTRACT.md`](docs/CONTRACT.md) · [`docs/SOURCES.md`](docs/SOURCES.md)
 
 ## Run it
 ```bash

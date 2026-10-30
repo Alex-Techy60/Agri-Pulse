@@ -24,3 +24,16 @@ qdrant_storage/
 *.mp4
 *.mov
 runs/
+
+# local-only: team plans, Claude Code config and work log (kept on disk, not published)
+CLAUDE.md
+.claude/
+PAIR_PLAN.md
+PLAN.md
+TEAM_PLAN.md
+START_HERE.md
+WINNING.md
+track1_execution_plan.md
+context.md
+docs/TIMELINE_48H.md
+docs/SUBMISSION_CHECKLIST.md
