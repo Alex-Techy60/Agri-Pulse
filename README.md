@@ -9,7 +9,7 @@ KisaanMitra turns a farmer's *place + crop* into a clear, spoken decision — **
 React UI ──SSE──▶ FastAPI /api/chat/stream ──▶ Orchestrator
   Router (fast LLM, keyword fallback)
   → Planner (LLM picks extra tools; code validates) → Tools in parallel: weather · rain_history · mandi
-  → one retry for unreachable sources ("replan") → post-tools: cross_check (price × rain), crop_stage (cited crop rules)
+  → one retry for unreachable sources ("replan") → post-tools: cross_check (price position/trend × rain), crop_stage (cited crop rules)
   → Retriever → Specialist (LLM, user's language) → Guardrails in code ⟲ self-correct → answer + cards + sources
 Photo: Vision model → structured diagnosis card (symptoms, severity, possible causes; no brands or doses)
 ```
@@ -43,9 +43,12 @@ Weather and rain history need no key. Without `LLM_API_KEY` the app shows live d
 The commit history is the evidence: `git log` shows the work added after the starter.
 
 ## Status — what was and was not verified
-- **Verified live (30 Oct 2026):** Open-Meteo weather and rain history; Groq chat, router and vision (a real tomato-blight photo gave a Hindi answer and a diagnosis card); OpenRouter failover; the Docker image; a fresh clone running `make setup` and `make test` with no keys.
-- **Not verified:** data.gov.in mandi prices. The API returned 502 for every query while this was written, so the mandi tool's parsing, the crop-name aliases and the sell/hold band are tested against response-shape fixtures only. Run `make check-live` first.
-- **Not verified:** voice transcription with real audio; the Marathi and Hindi answer quality beyond spot checks.
-- The sell/hold band (±5 % vs recent average) is a heuristic that has not been backtested on real prices.
+- **Verified live (30 Oct 2026):** Open-Meteo weather and rain history; data.gov.in mandi prices (real records for Maharashtra, Punjab, Karnataka, Kerala and others); Groq chat, router and vision (a real tomato-blight photo gave a Hindi answer and a diagnosis card); OpenRouter failover; the Docker image; a fresh clone running `make setup` and `make test` with no keys.
+- **What the mandi source really is** (found by testing the live API and its downloadable file):
+  - It publishes **only the current day** (17,000+ records, all dated the same day), and the API ignores the date filter. So a multi-day price **trend and the SELL_NOW / HOLD signal are not available from this source**; the app says so ("a price trend is not available").
+  - What it does compute from real data: today's prices, the farmer's district vs the state median (`ABOVE/NEAR/BELOW_STATE_MEDIAN`), and the best-paying market in the state. If heavy rain is forecast, `cross_check` uses that position to say sell-before-rain or protect-stock, and states that it is based on today's snapshot, not a trend.
+  - The API's commodity filter is a loose text match (asking for Onion also returns Onion Green), so records are cut to exact commodity matches. State spellings differ from the geocoder's (Kerala is Keralam, Delhi is NCT of Delhi), so they are translated.
+  - The trend code (3 or more days, +/-5 % band) is tested with fixtures only. It has never been run on real multi-day data and the +/-5 % band is an untested heuristic.
+- **Known limits:** the place finder lacks some places or uses old names (it finds "Panjim" and "Ahilyanagar" but not "Panaji" or "Ahmednagar"); if a typed state has no match the agent asks for a nearer town instead of guessing. Crop names were checked against real data; some crops have no records in some states on a given day, and the app says so. Voice transcription has not been tested with real audio. Hinglish typed in Latin script is answered in Hindi.
 
 MIT License.

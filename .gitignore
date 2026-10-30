@@ -41,3 +41,7 @@ docs/ARCHITECTURE.md
 docs/CONTRACT.md
 docs/SOURCES.md
 docs/DEMO_SCRIPT.md
+
+# downloaded dataset dumps (large, real data; never commit)
+9ef84268-*.json
+*.csv

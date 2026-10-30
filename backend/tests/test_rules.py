@@ -101,3 +101,51 @@ def test_run_all_mixes_context_and_plain_validators():
     assert run_all(vs, "ok fine", "") == []
     out = run_all(vs, "I guarantee 99 and 5 ml per litre today please now", "")
     assert len(out) == 4
+
+
+def test_market_position_labels_and_edges():
+    rows = lambda *ps: [{"market": f"M{i}", "district": "Nashik" if i == 0 else "Pune", "modal": p} for i, p in enumerate(ps)]
+    hi = pr.market_position(rows(3000, 2000, 2200, 2400), "Nashik")
+    assert hi["label"] == "ABOVE_STATE_MEDIAN" and hi["state_median"] == 2300 and hi["pct_vs_state_median"] == 30.4 and hi["best_price"] == 3000
+    assert pr.market_position(rows(1500, 2000, 2200, 2400), "nashik")["label"] == "BELOW_STATE_MEDIAN"  # case-insensitive district
+    assert pr.market_position(rows(2300, 2000, 2200, 2400), "Nashik")["label"] == "NEAR_STATE_MEDIAN"
+    nolocal = pr.market_position(rows(3000, 2000, 2200), "Satara")
+    assert "label" not in nolocal and nolocal["best_price"] == 3000
+    assert pr.market_position(rows(3000, 2000), "Nashik") is None and pr.market_position([], "x") is None
+    assert pr.market_position(rows(0, None, 2200, 2000, 2100), "Nashik")["markets"] == 3  # zero/None prices ignored
+
+
+def test_clean_rows_drops_entries_ten_times_away_from_the_median():
+    # Generic guard (typos / unit slips): prices of 9, 14 and 30 among values near 3700.
+    rows = [{"market": m, "modal": p} for m, p in [("A", 3700), ("B", 4000), ("C", 3600), ("D", 9), ("E", 14), ("F", 30), ("G", 5500)]]
+    kept = [r["market"] for r in pr.clean_rows(rows)]
+    assert kept == ["A", "B", "C", "G"]
+    assert pr.clean_rows([{"market": "x", "modal": 100}, {"market": "y", "modal": 5000}]) == [{"market": "x", "modal": 100}, {"market": "y", "modal": 5000}]  # <3 values: nothing to compare against
+    assert pr.clean_rows([]) == []
+
+
+def test_norm_name_matches_across_sources():
+    n = pr.norm_name
+    assert n("Srīnagar District") == n("Srinagar") == "srinagar"
+    assert n("Raipur district") == n("RAIPUR ") == "raipur" and n(None) == ""
+    rows = [{"market": "A", "district": "Ernakulam", "modal": 3500}, {"market": "B", "district": "Thrissur", "modal": 3000}, {"market": "C", "district": "Idukki", "modal": 3200}]
+    assert pr.market_position(rows, "Ernakulam District")["local_median"] == 3500
+
+
+def test_cross_check_uses_market_position_when_there_is_no_trend():
+    heavy = {"flags": [{"flag": "HEAVY_RAIN", "day": "2026-11-02", "day_index": 1, "value": 70.0}]}
+    above = {"label": "ABOVE_STATE_MEDIAN", "pct_vs_state_median": 5.3, "best_price": 5500, "best_market": "Ganjwad", "best_district": "Chandrapur"}
+    below = {**above, "label": "BELOW_STATE_MEDIAN", "pct_vs_state_median": -7.9}
+    near = {**above, "label": "NEAR_STATE_MEDIAN", "pct_vs_state_median": 1.0}
+    none = {"signal": "INSUFFICIENT_DATA"}
+    n = pr.cross_check(none, heavy, above)[0]
+    assert n.startswith("SELL_BEFORE_RAIN") and "no price trend" in n and "5.3 %" in n
+    n = pr.cross_check(none, heavy, below)[0]
+    assert n.startswith("STORAGE_RISK") and "7.9 %" in n and "Rs 5500 at Ganjwad (Chandrapur)" in n
+    assert pr.cross_check(none, heavy, near)[0].startswith("STORAGE_RISK") and "Rs 5500" not in pr.cross_check(none, heavy, near)[0]
+    assert pr.cross_check(none, heavy)[0].startswith("STORAGE_RISK")  # no position at all
+    # a real trend always wins over position
+    assert pr.cross_check({"signal": "SELL_NOW"}, heavy, below)[0].startswith("SELL_BEFORE_RAIN") and "recent average" in pr.cross_check({"signal": "SELL_NOW"}, heavy, below)[0]
+    assert pr.cross_check({"signal": "HOLD"}, heavy, above)[0].startswith("STORAGE_RISK")
+    # no heavy rain: position alone creates no sell/storage note
+    assert [x for x in pr.cross_check(none, {"flags": []}, above) if x.startswith(("SELL", "STORAGE"))] == []

@@ -192,3 +192,29 @@ def test_cache_is_capped(monkeypatch):
     for i in range(20):
         http.get_json("https://cap.test/a", {"i": i}, ttl=999)
     assert len(http._cache) == 5
+
+
+def test_tools_identify_themselves_with_a_descriptive_user_agent():
+    seen = {}
+
+    def handler(req):
+        seen["ua"] = req.headers.get("user-agent")
+        return httpx.Response(200, json={})
+
+    http._client = None  # force get_json to build its own client, then swap the transport underneath it
+    real = httpx.Client
+
+    class Spy(real):
+        def __init__(self, *a, **k):
+            super().__init__(*a, transport=httpx.MockTransport(handler), **k)
+
+    import pytest as _p
+
+    mp = _p.MonkeyPatch()
+    mp.setattr(http.httpx, "Client", Spy)
+    try:
+        http.get_json("https://ua.test/a")
+    finally:
+        mp.undo()
+        http._client = None
+    assert seen["ua"] == http.USER_AGENT and "python-httpx" not in seen["ua"] and "KisaanMitra" in seen["ua"]

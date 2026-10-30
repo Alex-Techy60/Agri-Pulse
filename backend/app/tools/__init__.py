@@ -50,7 +50,8 @@ def guarded(name: str):
                 raise
             except PlaceNotFound as e:
                 return ToolResult(
-                    f"{name.upper()} FAILED: place not found ({e}). Ask the user for the nearest town or district.", ok=False
+                    f"{name.upper()} FAILED: place not found ({e}). This is NOT a network problem: the place name could not be matched. "
+                    "Ask the user for the nearest bigger town or the district name.", ok=False
                 )
             except SourceUnavailable as e:
                 return ToolResult(

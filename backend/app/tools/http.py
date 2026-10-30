@@ -28,6 +28,9 @@ ROUND_GAP_S = 3.0
 _fails: dict[str, dict] = {}
 _client: httpx.Client | None = None
 SECRET_PARAMS = {"api-key", "api_key", "apikey", "key"}
+# data.gov.in's gateway hangs (502 after ~60 s) on the default "python-httpx" User-Agent but answers in <1 s when the
+# client identifies itself. An honest, descriptive agent is also what API operators ask for.
+USER_AGENT = "KisaanMitra/1.0 (FORGE 2026 hackathon; farm advisory)"
 
 
 @dataclass
@@ -104,7 +107,7 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
         raise SourceUnavailable(f"{host} is temporarily unreachable (not retrying for {int(wait) + 1}s)")
     try:
         if _client is None:
-            _client = httpx.Client(follow_redirects=True)
+            _client = httpx.Client(follow_redirects=True, headers={"User-Agent": USER_AGENT})
         r = _client.get(url, params=params, timeout=timeout or s.tool_timeout_s)
         r.raise_for_status()
         data = r.json()

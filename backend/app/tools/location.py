@@ -7,6 +7,17 @@ from app.tools.http import get_json
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
 
 
+# Indian states / UTs, lower-case, including common alternative spellings. If the farmer TYPES one of these, results from
+# other states must never be used silently (e.g. "Ahmednagar, Maharashtra" must not become Himatnagar, Gujarat).
+INDIA_STATES = {
+    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh", "chattisgarh", "goa", "gujarat", "haryana",
+    "himachal pradesh", "jharkhand", "karnataka", "kerala", "keralam", "madhya pradesh", "maharashtra", "manipur",
+    "meghalaya", "mizoram", "nagaland", "odisha", "orissa", "punjab", "rajasthan", "sikkim", "tamil nadu", "telangana",
+    "tripura", "uttar pradesh", "uttarakhand", "uttaranchal", "west bengal", "delhi", "new delhi", "puducherry",
+    "pondicherry", "chandigarh", "ladakh", "jammu and kashmir", "andaman and nicobar islands", "lakshadweep",
+}
+
+
 def _score(r: dict, rest: list[str]) -> int:
     hay = f"{r.get('admin1', '')} {r.get('admin2', '')}".lower()
     return sum(1 for t in rest if t and t in hay)
@@ -32,7 +43,12 @@ def resolve_location(profile: dict) -> dict:
     if not results:
         raise PlaceNotFound(place)
     rest = [p.lower() for p in parts[1:]]
-    best = max(results, key=lambda r: _score(r, rest)) if rest else results[0]
+    # The geocoder orders by name match, not importance: "Panaji" returns a Gujarat village before Goa's capital and
+    # "Ahmednagar" a Gujarat town before the Maharashtra city. Rank by state/district hint first, then by population.
+    best = max(results, key=lambda r: (_score(r, rest), r.get("population") or 0))
+    wanted = [t for t in rest if t in INDIA_STATES]
+    if wanted and not any(w in (best.get("admin1") or "").lower() for w in wanted):
+        raise PlaceNotFound(f"{parts[0]} in {', '.join(wanted)}: the place finder has no match there; ask for the nearest bigger town or the district name")
     return {
         "name": best.get("name", parts[0]),
         "state": best.get("admin1", ""),
