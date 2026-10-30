@@ -159,3 +159,12 @@ def test_plain_text_strips_markdown_symbols_but_keeps_numbers_and_dates():
     assert "*" not in out and "`" not in out and "#" not in out and not out.startswith("-")
     assert "Rs 3,717" in out and "2026-11-05" in out and "5-10 mm" in out
     assert plain_text("") == "" and plain_text(None) == ""
+
+
+def test_negated_guarantee_is_accepted_with_typographic_apostrophes():
+    from app.guardrails.validators import forbid_unless_negated
+
+    v = forbid_unless_negated({r"\bguarantee[d]?\b": "Makes a guarantee."})
+    assert v("I can’t guarantee 100% profit on onions.") == []
+    assert v("I can't guarantee profit.") == [] and v("I am unable to guarantee profit.") == []
+    assert v("I guarantee a profit.") == ["Makes a guarantee."]

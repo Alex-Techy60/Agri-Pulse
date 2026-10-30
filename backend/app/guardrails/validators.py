@@ -24,7 +24,8 @@ def forbid_patterns(rules: dict[str, str]) -> Validator:
     return check
 
 
-_NEGATION = re.compile(r"\b(?:not|no|never|cannot|can't|cant|without|nobody|nothing)\b|n't", re.I)
+# The LLM writes typographic apostrophes ("can\u2019t"), so both quote characters must count.
+_NEGATION = re.compile(r"\b(?:not|no|never|cannot|cant|unable|without|nobody|nothing)\b|n['\u2019]t", re.I)
 
 
 def forbid_unless_negated(rules: dict[str, str], window: int = 30) -> Validator:
