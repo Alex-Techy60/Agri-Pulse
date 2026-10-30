@@ -27,3 +27,16 @@ def _restore_tool_network():
     for m, attrs in _ORIGINAL.items():
         for n, fn in attrs.items():
             setattr(m, n, fn)
+
+
+import app.tools.http as _http  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_http_state():
+    """Circuit-breaker and cache state are process-wide; never let one test's outage leak into the next."""
+    _http._fails.clear()
+    _http._cache.clear()
+    yield
+    _http._fails.clear()
+    _http._cache.clear()

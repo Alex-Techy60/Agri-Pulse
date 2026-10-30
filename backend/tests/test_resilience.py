@@ -112,3 +112,83 @@ def test_router_keyword_fallback_handles_emoji_hindi_hinglish(text, intent, lang
 
 def test_script_lang_detects_indic_scripts():
     assert script_lang("வணக்கம்") == "ta" and script_lang("ਸਤ ਸ੍ਰੀ ਅਕਾਲ") == "pa" and script_lang("hello 🌾") == "en"
+
+
+# ---- circuit breaker + cache cap --------------------------------------------------------
+def test_breaker_opens_after_two_failed_rounds_then_fails_fast_and_recovers(monkeypatch):
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        raise httpx.ReadTimeout("slow")
+
+    use(handler)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(http.time, "time", lambda: clock["t"])
+    with pytest.raises(SourceUnavailable):
+        http.get_json("https://dead.test/a")  # round 1
+    clock["t"] += 8.5
+    with pytest.raises(SourceUnavailable):
+        http.get_json("https://dead.test/a")  # round 2 (the retry) -> breaker opens
+    n = calls["n"]
+    clock["t"] += 1
+    with pytest.raises(SourceUnavailable) as e:
+        http.get_json("https://dead.test/b")
+    assert calls["n"] == n and "temporarily unreachable" in str(e.value)  # no network call while open
+    clock["t"] += 40  # window over: one probe is allowed through
+    use(lambda req: httpx.Response(200, json={"ok": 1}))
+    assert http.get_json("https://dead.test/a").data == {"ok": 1}
+    assert "dead.test" not in http._fails  # success closes it
+
+
+def test_parallel_failures_count_as_one_round_so_the_retry_still_runs(monkeypatch):
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        raise httpx.ConnectError("x")
+
+    use(handler)
+    clock = {"t": 50.0}
+    monkeypatch.setattr(http.time, "time", lambda: clock["t"])
+    for _ in range(7):  # seven days fetched in parallel, all failing together
+        with pytest.raises(SourceUnavailable):
+            http.get_json("https://par.test/a", {"d": _})
+    clock["t"] += 0.5
+    with pytest.raises(SourceUnavailable):
+        http.get_json("https://par.test/a", {"d": 99})  # the retry is NOT blocked
+    assert calls["n"] == 8
+
+
+def test_open_breaker_still_serves_stale_real_data(monkeypatch):
+    clock = {"t": 10.0}
+    monkeypatch.setattr(http.time, "time", lambda: clock["t"])
+    use(lambda req: httpx.Response(200, json={"v": 7}))
+    assert http.get_json("https://st.test/a", ttl=5).data == {"v": 7}
+    clock["t"] += 100
+
+    def boom(req):
+        raise httpx.ReadTimeout("x")
+
+    use(boom)
+    for _ in range(2):
+        r = http.get_json("https://st.test/a", ttl=5)  # fails live -> stale cache each time
+        clock["t"] += 10
+    assert r.stale and r.data == {"v": 7}
+    assert http.get_json("https://st.test/a", ttl=5).stale  # breaker open: still the labelled stale copy
+
+
+def test_client_errors_do_not_trip_the_breaker():
+    use(lambda req: httpx.Response(403, json={"error": "bad key"}))
+    for i in range(4):
+        with pytest.raises(SourceUnavailable):
+            http.get_json("https://key.test/a", {"i": i})
+    assert "key.test" not in http._fails
+
+
+def test_cache_is_capped(monkeypatch):
+    monkeypatch.setattr(http, "CACHE_MAX", 5)
+    use(lambda req: httpx.Response(200, json={}))
+    for i in range(20):
+        http.get_json("https://cap.test/a", {"i": i}, ttl=999)
+    assert len(http._cache) == 5

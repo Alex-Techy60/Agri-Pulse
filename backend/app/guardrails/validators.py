@@ -24,6 +24,27 @@ def forbid_patterns(rules: dict[str, str]) -> Validator:
     return check
 
 
+_NEGATION = re.compile(r"\b(?:not|no|never|cannot|can't|cant|without|nobody|nothing)\b|n't", re.I)
+
+
+def forbid_unless_negated(rules: dict[str, str], window: int = 30) -> Validator:
+    """Like forbid_patterns, but a match is ignored when the same clause negates it ("I cannot guarantee profit",
+    "this is not risk-free"). Needed so a correct refusal is not rejected as if it were the forbidden claim."""
+    compiled = [(re.compile(p, re.I), m) for p, m in rules.items()]
+
+    def check(text: str) -> list[str]:
+        out = []
+        for rx, msg in compiled:
+            for m in rx.finditer(text):
+                clause = re.split(r"[.!?;\n]", text[max(0, m.start() - window):m.start()])[-1]
+                if not _NEGATION.search(clause):
+                    out.append(msg)
+                    break
+        return out
+
+    return check
+
+
 def numeric_limit(label: str, pattern: str, lo: float | None = None, hi: float | None = None, unit: str = "") -> Validator:
     """Extract a number via regex group 1 and enforce a hard range.
 
@@ -105,6 +126,23 @@ _INJECTION = re.compile(
 def looks_like_injection(text: str) -> bool:
     """Input-side screen for instruction-override attempts. Flags only: grounding + output rules still decide."""
     return bool(_INJECTION.search(text or ""))
+
+
+_ISO_DATE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+_DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2212": "-"})
+
+
+def grounded_dates() -> Validator:
+    """Every ISO date (YYYY-MM-DD) in the answer must appear in the CONTEXT. grounded_numbers alone would accept a
+    made-up date whose parts (2026, 11, 03) happen to occur elsewhere in the data. Handles typographic hyphens."""
+
+    def check(text: str, context: str = "") -> list[str]:
+        known = set(_ISO_DATE.findall(context.translate(_DASHES)))
+        bad = sorted({d for d in _ISO_DATE.findall(text.translate(_DASHES)) if d not in known})
+        return [f"These dates are not in the provided data: {', '.join(bad)}. Use only dates from the CONTEXT."] if bad else []
+
+    check.wants_context = True  # type: ignore[attr-defined]
+    return check
 
 
 def run_all(validators: list[Validator], text: str, context: str = "") -> list[str]:

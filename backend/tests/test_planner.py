@@ -109,3 +109,19 @@ def test_needs_input_is_never_retried():
 
     r = _run({"need": need})
     assert n["i"] == 1 and not any(t.action == "replan" for t in r.trace)
+
+
+def test_post_tools_skipped_when_a_source_failed_so_dead_source_is_not_requeried():
+    calls = []
+
+    def dead(text, profile):
+        return DOWN()
+
+    def post(text, profile):
+        calls.append("post")
+        return UP
+
+    planner_mod.RETRY_DELAY_S = 0
+    o = Orchestrator(domain(["dead"], ["post"], tools={"dead": dead, "post": post}), FakeLLM(["ok"]), StubStore())
+    r = o.run("will it rain?", profile={"place": "Nashik"})
+    assert calls == [] and any(t.action == "skip post-tools" for t in r.trace)

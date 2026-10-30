@@ -1,4 +1,4 @@
-"""In-memory sliding-window rate limit for chat routes (single process; enough for a demo deployment)."""
+"""In-memory sliding-window rate limit for chat and other quota-spending routes (single process; enough for a demo deployment)."""
 import threading
 import time
 from collections import defaultdict
@@ -24,8 +24,12 @@ def check_rate(key: str, limit: int, now: float | None = None) -> bool:
 
 
 def enforce(request: Request, session_id: str) -> None:
-    """Keyed by client IP + session: a fresh session_id alone cannot dodge the limit."""
+    """Two buckets: per client IP (3x the limit, so a shared venue network is not punished) and per IP+session.
+    The IP bucket is what stops a client that simply rotates session_id. Best-effort anti-abuse: behind a proxy the IP
+    comes from X-Forwarded-For, which a determined client can forge."""
     limit = get_settings().rate_limit_per_min
+    if not limit:
+        return
     ip = request.client.host if request.client else "?"
-    if limit and not check_rate(f"{ip}|{session_id}", limit):
+    if not check_rate(f"ip|{ip}", limit * 3) or not check_rate(f"{ip}|{session_id}", limit):
         raise HTTPException(429, "Too many requests. Please wait a minute and try again.", headers={"Retry-After": "60"})

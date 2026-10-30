@@ -68,3 +68,9 @@ def test_pipeline_unusable_photo_says_so_and_never_guesses():
     assert not r.cards and r.degraded
     assert "IMAGE ANALYSIS FAILED" in llm.last_messages[0]["content"]
     assert any(t.agent == "Vision" and not t.ok for t in r.trace)
+
+
+def test_internal_image_label_never_reaches_the_farmer():
+    assert run_all(DOMAIN.validators, "Spots on leaves (IMAGE ASSESSMENT).", "")
+    assert run_all(DOMAIN.validators, "image analysis says blight", "")
+    assert not run_all(DOMAIN.validators, "From your photo, the leaves have brown spots.", "")

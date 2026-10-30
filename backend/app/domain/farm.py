@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.domain import Domain, Intent
 from app.domain.diagnosis import BRAND_PATTERN, RATE_PATTERN, VISION_PROMPT, parse_diagnosis
-from app.guardrails.validators import forbid_patterns, grounded_numbers, max_words, numeric_limit
+from app.guardrails.validators import forbid_patterns, forbid_unless_negated, grounded_dates, grounded_numbers, max_words, numeric_limit
 from app.tools.crop_stage import crop_stage
 from app.tools.mandi import ALIASES, cross, mandi
 from app.tools.rain_history import rain_history
@@ -59,14 +59,16 @@ DOMAIN = Domain(
     post_tools={"sell_or_hold": ["cross_check"], "weather_advice": ["crop_stage"], "sow_or_crop_care": ["crop_stage"]},
     validators=[
         grounded_numbers(),  # every number in the answer must exist in tool output
+        grounded_dates(),  # ...and so must every date
         numeric_limit("pesticide dose", r"([\d.]+)\s*(?:ml|g)\s*(?:per|/)\s*(?:litre|liter|l)\b", hi=0.0, unit=" per litre"),  # no dose advice at all
-        forbid_patterns({r"\b(guarantee[d]?|100\s*%\s*sure|definitely will|sure profit|risk[- ]free)\b": "Makes a guarantee. Rephrase as decision support."}),
+        forbid_unless_negated({r"\b(guarantee[d]?|100\s*%\s*sure|definitely will|sure profit|risk[- ]free)\b": "Makes a guarantee. Rephrase as decision support."}),
         forbid_patterns({
             r"ignore\s+(your|all|previous)\s+(rules|instructions|system)": "Repeats an instruction-override attempt.",
             r"you\s+are\s+now\s+(a|an)\s+": "Accepts a role change.",
             r"system\s+prompt": "Mentions internal instructions.",
         }),
         forbid_patterns({BRAND_PATTERN: "Do not mention pesticide brand names.", RATE_PATTERN: "Do not recommend pesticide or fertiliser application rates."}),
+        forbid_patterns({r"IMAGE\s+(ASSESSMENT|ANALYSIS)": "Do not mention internal labels. Say 'from your photo' instead."}),
         max_words(170),
     ],
     safe_fallback=(

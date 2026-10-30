@@ -14,4 +14,5 @@ COPY backend/ backend/
 COPY --from=ui /ui/dist frontend/dist
 WORKDIR /app/backend
 ENV PORT=8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# --proxy-headers: behind Render/Railway the real client IP arrives in X-Forwarded-For; without it every visitor shares one rate-limit bucket
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

@@ -18,6 +18,8 @@ def test_api_returns_429_and_rejects_oversized_image():
         from app.core.config import get_settings
     except Exception:
         return
+    from app.api import ratelimit
+    ratelimit._hits.clear()
     s = get_settings()
     old, s.rate_limit_per_min = s.rate_limit_per_min, 2
     try:
@@ -28,3 +30,23 @@ def test_api_returns_429_and_rejects_oversized_image():
             assert c.post("/api/chat", json=big).status_code == 422
     finally:
         s.rate_limit_per_min = old
+
+
+def test_rotating_session_ids_cannot_dodge_the_ip_cap():
+    try:
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.core.config import get_settings
+        from app.api import ratelimit
+    except Exception:
+        return
+    ratelimit._hits.clear()
+    s = get_settings()
+    old, s.rate_limit_per_min = s.rate_limit_per_min, 2
+    try:
+        with TestClient(app) as c:
+            codes = [c.post("/api/chat", json={"message": "hi", "session_id": f"rot-{i}"}).status_code for i in range(8)]
+            assert codes[:6] == [200] * 6 and codes[6:] == [429, 429]  # IP cap = 3 x limit
+    finally:
+        s.rate_limit_per_min = old
+        ratelimit._hits.clear()

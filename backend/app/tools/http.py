@@ -18,6 +18,14 @@ from app.tools import SourceUnavailable
 
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
+CACHE_MAX = 2000  # entries; oldest evicted first (unique places x days would otherwise grow without bound)
+
+# Circuit breaker per host: a source that failed in two separate "rounds" (parallel calls that fail together count as one,
+# and the orchestrator's single retry is the second) is not queried again for BREAKER_S seconds. Without it every question
+# during an outage waits the full timeout twice. Stale-but-real cached data is still served while it is open.
+BREAKER_S = 30.0
+ROUND_GAP_S = 3.0
+_fails: dict[str, dict] = {}
 _client: httpx.Client | None = None
 SECRET_PARAMS = {"api-key", "api_key", "apikey", "key"}
 
@@ -47,6 +55,36 @@ def _redact(msg: str, params: dict | None) -> str:
     return msg
 
 
+def _host(url: str) -> str:
+    return httpx.URL(url).host
+
+
+def _breaker_wait(host: str, now: float) -> float:
+    st = _fails.get(host)
+    if st and st["rounds"] >= 2 and now - st["last"] < BREAKER_S:
+        return BREAKER_S - (now - st["last"])
+    return 0.0
+
+
+def _note_failure(host: str, now: float) -> None:
+    with _lock:
+        st = _fails.get(host)
+        if st is None or now - st["last"] > 120:  # a long-quiet source starts from scratch
+            _fails[host] = {"rounds": 1, "round_start": now, "last": now}
+        else:
+            if now - st["round_start"] > ROUND_GAP_S:
+                st["rounds"] += 1
+                st["round_start"] = now
+            st["last"] = now
+
+
+def _worth_counting(e: Exception) -> bool:
+    """Outages count; a 400/403/404 is our request's fault and must not shut the source off."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code >= 500 or e.response.status_code == 429
+    return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
+
+
 def get_json(url: str, params: dict | None = None, ttl: float | None = None, timeout: float | None = None) -> Fetched:
     global _client
     s = get_settings()
@@ -57,6 +95,13 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
         hit = _cache.get(key)
     if hit and now - hit[0] < ttl:
         return Fetched(hit[1], _public(url, params), _iso(hit[0]), False, int(now - hit[0]))
+    host = _host(url)
+    with _lock:
+        wait = _breaker_wait(host, now)
+    if wait > 0:
+        if hit:
+            return Fetched(hit[1], _public(url, params), _iso(hit[0]), True, int(now - hit[0]))
+        raise SourceUnavailable(f"{host} is temporarily unreachable (not retrying for {int(wait) + 1}s)")
     try:
         if _client is None:
             _client = httpx.Client(follow_redirects=True)
@@ -65,8 +110,13 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
         data = r.json()
         with _lock:
             _cache[key] = (now, data)
+            if len(_cache) > CACHE_MAX:
+                _cache.pop(next(iter(_cache)))
+            _fails.pop(host, None)
         return Fetched(data, _public(url, params), _iso(now), False, 0)
     except Exception as e:
+        if _worth_counting(e):
+            _note_failure(host, time.time())  # when it FAILED, not when it started (a timeout started seconds earlier)
         if hit:  # earlier REAL response, clearly labelled stale
             return Fetched(hit[1], _public(url, params), _iso(hit[0]), True, int(now - hit[0]))
         raise SourceUnavailable(_redact(f"{type(e).__name__}: {e}", params)) from e
