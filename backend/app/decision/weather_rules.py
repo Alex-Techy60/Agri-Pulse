@@ -1,6 +1,6 @@
 """Deterministic weather risk rules. LLM never decides these; code does.
 
-Every threshold below is tagged with its basis (full table + URLs: docs/SOURCES.md):
+Every threshold below is tagged with its basis:
   IMD        = India Meteorological Department glossary definition (verified against the glossary text).
   HEURISTIC  = practical guidance WITHOUT a verified Indian primary source; justification given inline.
 """
@@ -78,7 +78,7 @@ def analyze(days: list[dict]) -> dict:
     }
 
 
-# Rain-history rules (HEURISTIC; justification in docs/SOURCES.md). 'Dry' = under one IMD rainy day's worth (2.5 mm) in 7 days.
+# Rain-history rules (HEURISTIC: no verified source). 'Dry' = under one IMD rainy day's worth (2.5 mm) in 7 days.
 DRY_PAST7_MM = 2.5
 DRY_NEXT7_MM = 5.0
 IRRIGATION_URGENT_PAST14_MM = 5.0
