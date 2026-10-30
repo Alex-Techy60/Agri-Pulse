@@ -92,3 +92,25 @@ def test_primary_only_skips_the_fallback():
     s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
     r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], primary_only=True, offline="OFF")
     assert hosts == ["p.test"] and r.provider == "offline"
+
+
+def test_a_dropped_connection_is_retried_once_before_the_fallback(monkeypatch):
+    import httpx
+
+    import app.llm.client as c
+
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    calls = {"p": 0, "fb": 0}
+
+    def handler(req):
+        if req.url.host == "p.test":
+            calls["p"] += 1
+            if calls["p"] == 1:
+                raise httpx.RemoteProtocolError("Server disconnected without sending a response.", request=req)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "from primary"}}]})
+        calls["fb"] += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from fallback"}}]})
+
+    s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from primary" and not r.degraded and calls == {"p": 2, "fb": 0}

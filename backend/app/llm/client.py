@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 log = logging.getLogger("llm")
 
 MIN_REASONING_TOKENS = 400
+_DROPPED = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)  # not timeouts: retrying those would double a 25 s wait
 
 
 @dataclass
@@ -75,7 +76,12 @@ class LLMClient:
                 if json_mode:
                     body["response_format"] = {"type": "json_object"}
                 def send():
-                    return self._http.post(f"{base.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body)
+                    url = f"{base.rstrip('/')}/chat/completions"
+                    try:
+                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body)
+                    except _DROPPED:  # a connection the provider dropped is not an outage: retry before the slow fallback
+                        time.sleep(0.5)
+                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body)
 
                 r = send()
                 wait = _short_retry_after(r) if (r.status_code == 429 and name == "primary") else None

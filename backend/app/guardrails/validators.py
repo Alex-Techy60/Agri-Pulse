@@ -145,6 +145,16 @@ def grounded_dates() -> Validator:
     return check
 
 
+_MD_LINE_START = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*\u2022][ \t]+)", re.MULTILINE)
+_MD_INLINE = re.compile(r"\*\*|__|`")
+
+
+def plain_text(text: str) -> str:
+    """Strip markdown symbols (the reply may be read aloud, and the prompt alone cannot guarantee it). Touches symbols
+    only: hyphens inside dates and ranges, and every number, stay exactly as they were."""
+    return _MD_INLINE.sub("", _MD_LINE_START.sub("", text or "")).strip()
+
+
 def run_all(validators: list[Validator], text: str, context: str = "") -> list[str]:
     out: list[str] = []
     for v in validators:

@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.agents import planner as planner_mod
 from app.agents.planner import Planner
 from app.domain import Domain, Intent, load_domain
-from app.guardrails.validators import looks_like_injection, run_all
+from app.guardrails.validators import looks_like_injection, plain_text, run_all
 from app.llm.client import LLMClient, get_llm
 from app.memory.store import KNOWLEDGE, MEMORY, VectorStore, get_store
 from app.tools import NeedsInput, ToolResult
@@ -295,6 +295,8 @@ class Orchestrator:
         else:
             answer = self.domain.safe_fallback
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
+
+        answer = plain_text(answer)
 
         # 6) Remember --------------------------------------------------------------
         if session_id != "default":

@@ -149,3 +149,13 @@ def test_cross_check_uses_market_position_when_there_is_no_trend():
     assert pr.cross_check({"signal": "HOLD"}, heavy, above)[0].startswith("STORAGE_RISK")
     # no heavy rain: position alone creates no sell/storage note
     assert [x for x in pr.cross_check(none, {"flags": []}, above) if x.startswith(("SELL", "STORAGE"))] == []
+
+
+def test_plain_text_strips_markdown_symbols_but_keeps_numbers_and_dates():
+    from app.guardrails.validators import plain_text
+
+    raw = "## Advice\n- **Sell** now at Rs 3,717\n* use `2026-11-05` to spray\n> note: 5-10 mm"
+    out = plain_text(raw)
+    assert "*" not in out and "`" not in out and "#" not in out and not out.startswith("-")
+    assert "Rs 3,717" in out and "2026-11-05" in out and "5-10 mm" in out
+    assert plain_text("") == "" and plain_text(None) == ""
