@@ -13,7 +13,7 @@ Nothing here raises to the caller.
 from __future__ import annotations
 
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -81,6 +81,7 @@ class Orchestrator:
         self.s = get_settings()
         self.planner = Planner(self.llm, self.domain)
         self.history: dict[str, deque] = defaultdict(lambda: deque(maxlen=self.s.history_turns * 2))
+        self.profiles: OrderedDict[str, dict] = OrderedDict()  # session -> {place, crop}; in-process, capped
 
     # ------------------------------------------------------------------ API
     def run(self, text: str, session_id: str = "default", language: str | None = None, image_b64: str | None = None, profile: dict | None = None) -> ChatResult:
@@ -115,6 +116,14 @@ class Orchestrator:
         if not text and not image_b64:
             yield {"type": "final", "result": ChatResult("Please type or speak your question.", "general", language or "en", trace=trace, profile=profile)}
             return
+
+        # 0) Remembered profile: a follow-up without place/crop reuses what this session already gave us.
+        # Never for the shared "default" session: that would leak one farmer's location to the next anonymous user.
+        if session_id != "default":
+            remembered = {k: v for k, v in self.profiles.get(session_id, {}).items() if k not in profile}
+            if remembered:
+                profile = {**remembered, **profile}
+                yield step("Retriever", "remembered profile", ", ".join(f"{k}={v}" for k, v in remembered.items()))
 
         # 1) Vision (optional) --------------------------------------------------
         image_ctx, image_cards = "", []
@@ -263,6 +272,17 @@ class Orchestrator:
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
 
         # 6) Remember --------------------------------------------------------------
+        if session_id != "default":
+            keep = {}
+            if profile.get("crop"):
+                keep["crop"] = str(profile["crop"])[:60]
+            if profile.get("place") and resolved.get("lat") is not None:  # only a place the live geocoder actually found
+                keep["place"] = str(profile["place"])[:100]
+            if keep:
+                self.profiles[session_id] = {**self.profiles.get(session_id, {}), **keep}
+                self.profiles.move_to_end(session_id)
+                while len(self.profiles) > 1000:
+                    self.profiles.popitem(last=False)
         self.history[session_id].extend([{"role": "user", "content": text}, {"role": "assistant", "content": answer}])
         try:
             self.store.remember(session_id, f"User asked: {text[:200]}")
