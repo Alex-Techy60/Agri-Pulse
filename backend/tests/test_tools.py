@@ -350,3 +350,37 @@ def test_a_state_the_farmer_typed_is_never_silently_replaced_by_another_state():
     assert loc_mod.resolve_location({"place": "Himatnagar, India"})["state"] == "Gujarat"  # 'India' is not a state: no rejection
     r = weather_mod.weather("", {"place": "Ahmednagar, Maharashtra"})
     assert not r.ok and "place not found" in r.text
+
+
+def test_a_district_the_farmer_typed_is_never_silently_replaced_by_another_district():
+    import app.tools.location as loc_mod
+
+    latur = [{"name": "Sawantwadi", "latitude": 18.4, "longitude": 76.8, "admin1": "Maharashtra", "admin2": "Latur District", "population": 0}]
+    install(lambda url, p: {"results": latur})
+    try:
+        loc_mod.resolve_location({"place": "Sawantwadi, Sindhudurg, Maharashtra"})
+        raise AssertionError("expected PlaceNotFound")
+    except PlaceNotFound as e:
+        assert "sindhudurg" in str(e).lower()
+    assert loc_mod.resolve_location({"place": "Sawantwadi, Latur, Maharashtra"})["district"] == "Latur District"
+    assert loc_mod.resolve_location({"place": "Sawantwadi, Latur district"})["district"] == "Latur District"  # filler words ignored
+    assert loc_mod.resolve_location({"place": "Sawantwadi"})["district"] == "Latur District"  # no district typed: unchanged
+    assert loc_mod.resolve_location({"place": "Sawantwadi, India"})["state"] == "Maharashtra"
+    r = mandi_mod.mandi("", {"place": "Sawantwadi, Sindhudurg, Maharashtra", "crop": "Onion"})
+    assert not r.ok and "place not found" in r.text
+
+
+def test_old_and_alternate_place_names_are_looked_up_under_the_name_the_geocoder_knows():
+    import app.tools.location as loc_mod
+
+    asked = []
+
+    def routes(url, p):
+        asked.append(p["name"])
+        state = "Chhattisgarh" if p["name"] == "Raipur" else "Maharashtra"
+        return {"results": [{"name": p["name"], "latitude": 19.1, "longitude": 74.7, "admin1": state, "admin2": "Ahmednagar", "population": 367140}]}
+
+    install(routes)
+    assert loc_mod.resolve_location({"place": "Ahmednagar, Maharashtra"})["district"] == "Ahmednagar"
+    assert loc_mod.resolve_location({"place": "Raipur district, Chhattisgarh"})["name"] == "Raipur"
+    assert asked == ["Ahilyanagar", "Raipur"]

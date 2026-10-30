@@ -18,6 +18,29 @@ INDIA_STATES = {
 }
 
 
+# Words that say nothing about WHICH place: "Pune district", "Khed taluka", "Nashik, India".
+FILLER = {"india", "district", "dist", "tehsil", "taluka", "taluk", "tal", "village", "city"}
+
+
+# Names farmers still type -> the name the geocoder actually knows. Each target was checked live on 31 Oct 2026 and
+# returns the right state ("Gurgaon" alone otherwise resolves to a village in Hingoli, Maharashtra; "Panaji" has no Goa entry).
+GEO_NAMES = {
+    "ahmednagar": "Ahilyanagar", "panaji": "Panjim", "bangalore": "Bengaluru", "allahabad": "Prayagraj", "gurgaon": "Gurugram",
+}
+
+
+def _district_hints(rest: list[str]) -> list[str]:
+    """Typed parts that are neither a state nor filler: the district/town the farmer named."""
+    hints = []
+    for t in rest:
+        if t in INDIA_STATES:
+            continue
+        words = [w for w in t.split() if w not in FILLER]
+        if words:
+            hints.append(" ".join(words))
+    return hints
+
+
 def _score(r: dict, rest: list[str]) -> int:
     hay = f"{r.get('admin1', '')} {r.get('admin2', '')}".lower()
     return sum(1 for t in rest if t and t in hay)
@@ -38,7 +61,9 @@ def resolve_location(profile: dict) -> dict:
     if not place:
         raise NeedsInput("place", "the nearest town, village or district of the farm")
     parts = [p.strip() for p in place.split(",") if p.strip()]
-    f = get_json(GEO_URL, {"name": parts[0], "count": 10, "language": "en", "format": "json", "countryCode": "IN"}, ttl=86400)
+    query = " ".join(w for w in parts[0].split() if w.lower() not in FILLER) or parts[0]  # "Raipur district" -> "Raipur"
+    query = GEO_NAMES.get(query.lower(), query)
+    f = get_json(GEO_URL, {"name": query, "count": 10, "language": "en", "format": "json", "countryCode": "IN"}, ttl=86400)
     results = (f.data or {}).get("results") or [] if isinstance(f.data, dict) else []
     if not results:
         raise PlaceNotFound(place)
@@ -49,6 +74,12 @@ def resolve_location(profile: dict) -> dict:
     wanted = [t for t in rest if t in INDIA_STATES]
     if wanted and not any(w in (best.get("admin1") or "").lower() for w in wanted):
         raise PlaceNotFound(f"{parts[0]} in {', '.join(wanted)}: the place finder has no match there; ask for the nearest bigger town or the district name")
+    # Same rule for a typed district: "Sawantwadi, Sindhudurg" must not become the only Sawantwadi the geocoder knows
+    # (a village in Latur): that would give the farmer another district's weather and prices without a word.
+    hints = _district_hints(rest)
+    where = f"{best.get('admin1', '')} {best.get('admin2', '')} {best.get('name', '')}".lower()
+    if hints and not any(h in where for h in hints):
+        raise PlaceNotFound(f"{parts[0]} in {', '.join(hints)}: the place finder only knows {parts[0]} in {best.get('admin2') or best.get('admin1')}; ask for the nearest bigger town")
     return {
         "name": best.get("name", parts[0]),
         "state": best.get("admin1", ""),
