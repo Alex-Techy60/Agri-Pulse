@@ -69,11 +69,14 @@ class LLMClient:
                     body["max_tokens"] = max(max_tokens, 400)
                 if json_mode:
                     body["response_format"] = {"type": "json_object"}
-                r = self._http.post(
-                    f"{base.rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json=body,
-                )
+                def send():
+                    return self._http.post(f"{base.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body)
+
+                r = send()
+                wait = _short_retry_after(r) if (r.status_code == 429 and name == "primary") else None
+                if wait is not None:  # free-tier burst limit: waiting a moment beats dropping to a slower fallback
+                    time.sleep(wait)
+                    r = send()
                 r.raise_for_status()
                 data = r.json()
                 text = data["choices"][0]["message"]["content"] or ""
@@ -142,6 +145,18 @@ class LLMClient:
 
 # --------------------------------------------------------------------- utils
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+RETRY_AFTER_MAX_S = 4.0
+
+
+def _short_retry_after(r) -> float | None:
+    """Seconds to wait if the 429 says the limit clears quickly; None if it is long or unspecified."""
+    try:
+        v = float(r.headers.get("retry-after", ""))
+    except (TypeError, ValueError):
+        return None
+    return v if 0 <= v <= RETRY_AFTER_MAX_S else None
 
 
 def strip_think(text: str) -> str:
