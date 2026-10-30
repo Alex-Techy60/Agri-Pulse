@@ -32,7 +32,7 @@ class Planner:
         try:
             data, _ = self.llm.chat_json(
                 [{"role": "system", "content": prompt}, {"role": "user", "content": text}],
-                fast=True, temperature=0, max_tokens=120, offline="",
+                fast=True, temperature=0, max_tokens=120, offline="", primary_only=True,  # it can only add tools, so it is not worth ~10 s
             )
         except Exception:
             data = None

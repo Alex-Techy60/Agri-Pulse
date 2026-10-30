@@ -19,6 +19,8 @@ from app.core.config import Settings, get_settings
 
 log = logging.getLogger("llm")
 
+MIN_REASONING_TOKENS = 400
+
 
 @dataclass
 class LLMResult:
@@ -46,12 +48,13 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int = 700,
         offline: str = "I'm having trouble reaching my AI service right now. Please try again in a moment.",
+        primary_only: bool = False,  # optional steps: a safe default beats waiting on the slow fallback
     ) -> LLMResult:
         s = self.s
         providers = []
         if s.llm_api_key:
             providers.append(("primary", s.llm_base_url, s.llm_api_key, s.llm_fast_model if fast else s.llm_model))
-        if s.fallback_api_key and s.fallback_base_url and s.fallback_model:
+        if s.fallback_api_key and s.fallback_base_url and s.fallback_model and not primary_only:
             providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model))
 
         last_err = "no provider configured (set LLM_API_KEY)"
@@ -66,7 +69,9 @@ class LLMClient:
                 }
                 if model.startswith("openai/gpt-oss"):  # reasoning models: reasoning tokens count against max_tokens
                     body["reasoning_effort"] = "low"
-                    body["max_tokens"] = max(max_tokens, 400)
+                if name == "fallback" or model.startswith("openai/gpt-oss"):
+                    # the free fallback reasons too: at the router's 80 tokens it cut JSON off, losing Marathi detection
+                    body["max_tokens"] = max(max_tokens, MIN_REASONING_TOKENS)
                 if json_mode:
                     body["response_format"] = {"type": "json_object"}
                 def send():

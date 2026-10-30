@@ -62,3 +62,33 @@ def test_long_or_missing_retry_after_goes_straight_to_fallback(monkeypatch):
         r = c.LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
         assert r.provider == "fallback" and r.degraded
     assert slept == []
+
+
+def test_fallback_gets_enough_tokens_to_finish_json_after_reasoning():
+    import httpx
+
+    seen = {}
+
+    def handler(req):
+        if req.url.host == "p.test":
+            return httpx.Response(401, json={"error": "bad key"})
+        seen.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", llm_fast_model="small", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
+    LLMClient(s, transport=httpx.MockTransport(handler)).chat_json([{"role": "user", "content": "hi"}], fast=True, max_tokens=80)
+    assert seen["max_tokens"] >= 400
+
+
+def test_primary_only_skips_the_fallback():
+    import httpx
+
+    hosts = []
+
+    def handler(req):
+        hosts.append(req.url.host)
+        return httpx.Response(401, json={"error": "bad key"})
+
+    s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], primary_only=True, offline="OFF")
+    assert hosts == ["p.test"] and r.provider == "offline"

@@ -1,0 +1,21 @@
+# Render blueprint: one container serving the API and the built UI. Keys are entered in the dashboard, never here.
+services:
+  - type: web
+    name: kisaanmitra
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: LLM_API_KEY
+        sync: false
+      - key: FALLBACK_API_KEY
+        sync: false
+      - key: FALLBACK_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: FALLBACK_MODEL
+        value: nvidia/nemotron-3-ultra-550b-a55b:free
+      - key: DATA_GOV_API_KEY
+        sync: false
+      - key: MANDI_FILTER_STYLE
+        value: lower

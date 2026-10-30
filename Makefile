@@ -3,6 +3,7 @@
 PY ?= python3
 PLACE ?= Nashik, Maharashtra
 CROP ?= Onion
+BASE ?= http://localhost:8000
 VENV = backend/.venv
 BIN = $(VENV)/bin
 
@@ -35,9 +36,9 @@ check-live:
 	cd backend && ../$(BIN)/python -m scripts.check_live "$(PLACE)" "$(CROP)"
 
 demo-check:
-	@curl -sf localhost:8000/api/health >/dev/null && echo "PASS health" || (echo "FAIL health: is the API running?"; exit 1)
-	@curl -sf -X POST localhost:8000/api/chat -H 'content-type: application/json' -d '{"message":"hello"}' | grep -q '"answer"' && echo "PASS chat" || (echo "FAIL chat"; exit 1)
-	@curl -sf "localhost:8000/api/live-check" | python3 -c "import sys,json; d=json.load(sys.stdin); bad=[k for k,v in d.items() if not v['ok']]; print('PASS live data' if not bad else 'FAIL live data: '+', '.join(bad)); sys.exit(1 if bad else 0)"
+	@curl -sf -m 90 $(BASE)/api/health >/dev/null && echo "PASS health" || (echo "FAIL health: is the API running at $(BASE)?"; exit 1)
+	@curl -sf -m 90 -X POST $(BASE)/api/chat -H 'content-type: application/json' -d '{"message":"Should I sell my onions now?","profile":{"place":"Nashik, Maharashtra","crop":"Onion"}}' | python3 -c "import sys,json; d=json.load(sys.stdin); ok=d.get('answer') and not d.get('degraded'); print('PASS chat' if ok else 'FAIL chat: degraded or empty answer'); sys.exit(0 if ok else 1)"
+	@curl -sf -m 90 "$(BASE)/api/live-check" | python3 -c "import sys,json; d=json.load(sys.stdin); bad=[k for k,v in d.items() if not v['ok']]; print('PASS live data' if not bad else 'FAIL live data: '+', '.join(bad)); sys.exit(1 if bad else 0)"
 
 clean:
 	rm -rf $(VENV) frontend/node_modules frontend/dist
