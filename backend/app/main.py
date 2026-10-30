@@ -12,6 +12,8 @@ from app.core.config import get_settings
 from app.memory.store import KNOWLEDGE, get_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+for _noisy in ("httpx", "httpcore"):  # httpx logs full request URLs at INFO, and the data.gov.in key travels in the URL
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 KNOWLEDGE_DIR = Path(__file__).parent.parent / "data" / "knowledge"
 DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
