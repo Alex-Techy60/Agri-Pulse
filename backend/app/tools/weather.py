@@ -67,7 +67,7 @@ def get_weather(profile: dict) -> ToolResult:
         "flags": [{"flag": x["flag"], "day": x["day"]} for x in a["flags"]],
         "soil_moisture": soil,
     }
-    return ToolResult("\n".join(lines), True, sources, [card], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "analysis": a, "soil_moisture": soil})
+    return ToolResult("\n".join(lines), True, sources, [card], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "analysis": a, "soil_moisture": soil, "days": days})
 
 
 weather = guarded("weather")(lambda text, profile: get_weather(profile))
