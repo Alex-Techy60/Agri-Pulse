@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from app.core import stats
 from app.core.config import get_settings
 from app.agents import planner as planner_mod
 from app.agents.planner import Planner
@@ -91,6 +92,16 @@ class Orchestrator:
         return final
 
     def stream(self, text: str, session_id: str = "default", language: str | None = None, image_b64: str | None = None, profile: dict | None = None) -> Iterator[dict]:
+        t_start = time.time()
+        for ev in self._stream(text, session_id, language, image_b64, profile):
+            if ev["type"] == "final":
+                try:
+                    stats.record(ev["result"].dict(), int((time.time() - t_start) * 1000))
+                except Exception:  # metrics must never break an answer
+                    pass
+            yield ev
+
+    def _stream(self, text: str, session_id: str = "default", language: str | None = None, image_b64: str | None = None, profile: dict | None = None) -> Iterator[dict]:
         trace: list[TraceStep] = []
         profile = {k: v for k, v in (profile or {}).items() if v not in (None, "")}
 

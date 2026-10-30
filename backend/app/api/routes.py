@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.orchestrator import get_orchestrator
 from app.api.ratelimit import enforce
+from app.core import stats
 from app.core.config import get_settings
 from app.llm.client import get_llm
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
@@ -34,6 +35,12 @@ def health():
         "knowledge_chunks": st.count(KNOWLEDGE),
         "memories": st.count(MEMORY),
     }
+
+
+@router.get("/stats")
+def get_stats():
+    """Aggregate counters since process start (no user text)."""
+    return stats.snapshot()
 
 
 @router.get("/domain")
