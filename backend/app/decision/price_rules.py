@@ -96,7 +96,7 @@ def signal(series: list[dict]) -> dict:
 
 def cross_check(price: dict, weather: dict, position: dict | None = None) -> list[str]:
     """Combine price signal with weather risk. Pure function; returns plain-English notes.
-    With a price TREND (>= 3 days of history) the trend decides. This source publishes only today's prices, so without a
+    With a price TREND (>= 3 days of history) the trend decides. When the history source fails there is no trend, so without a
     trend the farmer's market position today (vs the state median) is used instead, and the note says so."""
     notes: list[str] = []
     heavy_soon = [f for f in weather.get("flags", []) if f["flag"] == "HEAVY_RAIN" and f["day_index"] <= 3]
@@ -120,7 +120,7 @@ def cross_check(price: dict, weather: dict, position: dict | None = None) -> lis
 
 def market_position(rows: list[dict], district: str) -> dict | None:
     """Where the farmer's district sits among the state's markets on the latest day. Descriptive, not a forecast: the
-    source publishes only the current day, so this works without any price history. rows = [{market, district, modal}]."""
+    this works from a single day of prices, without any history. rows = [{market, district, modal}]."""
     ok = [r for r in rows if r.get("modal")]
     if len(ok) < 3:
         return None

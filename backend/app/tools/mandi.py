@@ -3,23 +3,30 @@
 Needs a free key: DATA_GOV_API_KEY (https://data.gov.in -> register -> My Account -> API key).
 Without it the tool returns an explicit "source unavailable" result; it NEVER fills in prices.
 
-Schema note: the exact field/filter spelling of the data.gov.in resource could not be confirmed when this
-was written, so records are key-normalised (lower-case) and filters are tried as `state`/`commodity`/`arrival_date`
-and then `State`/`Commodity`/`Arrival_Date`. Run `make check-live` once with your key to confirm.
+Two resources, both verified live on 30 Oct 2026:
+* MANDI_RESOURCE_ID: today's prices only (the date filter is ignored; lower-case filter names).
+* MANDI_HISTORY_RESOURCE_ID: dated prices up to yesterday (the date filter works; Title-case filter names). This is what
+  makes a trend possible. If it fails the tool degrades to today's prices and says no trend is available.
 """
 from __future__ import annotations
 
+import datetime as dt
+import logging
 import re
 
 from app.core.config import get_settings
-from app.decision.price_rules import build_series, clean_rows, cross_check, market_position, norm_name, signal
+from app.decision.price_rules import build_series, clean_rows, cross_check, market_position, norm_name, parse_date, signal
 from app.tools import NeedsInput, SourceUnavailable, ToolResult, guarded
 from app.tools.http import get_json
 from app.tools.location import resolve_location
 from app.tools.weather import get_weather
 
+log = logging.getLogger("tool.mandi")
 API = "https://api.data.gov.in/resource/{rid}"
 PAGE, MAX_PAGES = 500, 4  # per-call limit and a cap on pages: a state-level query is far below 2000 rows
+HISTORY_TTL_S = 3600  # new days arrive at most daily, and every cache miss spends rate-limited quota
+HISTORY_PAGES = 2  # 500 rows is about a week for a busy crop in a big state
+HISTORY_TIMEOUT_S = 4.0  # history is an extra: it must not eat the whole request when the API is slow
 
 # UI/common crop name -> Agmarknet commodity name. EVERY name below was checked against the real data.gov.in file of
 # 30 Oct 2026 (all exist; 'Paddy(Dhan)(Common)' did not and is now 'Paddy(Common)'). Unknown crops pass through Title-Cased.
@@ -102,6 +109,29 @@ def _fetch_records(state: str, commodity: str, key: str, rid: str, style: str):
     return [], last
 
 
+def _fetch_history(state: str, commodity: str, key: str, rid: str, days: int):
+    """The `days - 1` days before today -> (records, [Fetched], complete). Raw rows on purpose: build_series averages and
+    cleans them. One sorted call instead of one per day, because data.gov.in rate limits (429) a burst and that would trip
+    the shared circuit breaker and take today's prices down too. A failure only loses the trend, so it never raises."""
+    today = dt.date.today()
+    oldest = today - dt.timedelta(days=days - 1)
+    records, fetched = [], []
+    for page in range(HISTORY_PAGES):
+        params = {"api-key": key, "format": "json", "limit": PAGE, "offset": page * PAGE, "filters[State]": state, "filters[Commodity]": commodity, "sort[Arrival_Date]": "desc"}
+        try:
+            f = get_json(API.format(rid=rid), params, ttl=HISTORY_TTL_S, timeout=HISTORY_TIMEOUT_S)
+        except Exception as e:
+            log.warning("price history unavailable: %s", type(e).__name__)
+            return records, fetched, False
+        batch = [_norm(r) for r in ((f.data if isinstance(f.data, dict) else {}).get("records") or [])]
+        dates = [d for d in (parse_date(r.get("arrival_date", "")) for r in batch) if d]
+        records += [r for r in batch if _same(r.get("commodity", ""), commodity) and (d := parse_date(r.get("arrival_date", ""))) and oldest <= d < today]
+        fetched.append(f)
+        if len(batch) < PAGE or not dates or min(dates) < oldest:
+            break
+    return records, fetched if records else [], True
+
+
 def get_mandi(profile: dict, text: str = "") -> ToolResult:
     s = get_settings()
     if not s.data_gov_api_key:
@@ -111,25 +141,30 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         raise NeedsInput("state", "the state of the farm (the place could not be matched to a state)")
     commodity = commodity_name(profile, text)
 
-    records, f = _fetch_records(agmarknet_state(loc["state"]), commodity, s.data_gov_api_key, s.mandi_resource_id, s.mandi_filter_style)
+    state_name = agmarknet_state(loc["state"])
+    records, f = _fetch_records(state_name, commodity, s.data_gov_api_key, s.mandi_resource_id, s.mandi_filter_style)
     fetched = [f] if f is not None else []
     if not fetched:
         raise SourceUnavailable("no response from data.gov.in")
-    series = build_series(records)
+    history, hist_fetched, hist_complete = _fetch_history(state_name, commodity, s.data_gov_api_key, s.mandi_history_resource_id, s.mandi_days)
+    series = build_series(records + history)
     src = {"name": "data.gov.in Agmarknet", "url": fetched[0].url, "fetched_at": max(f.fetched_at for f in fetched), "stale": any(f.stale for f in fetched)}
     sources = [src] + ([loc["source"]] if loc.get("source") else [])
+    if hist_fetched:
+        sources.insert(1, {"name": "data.gov.in Agmarknet history", "url": hist_fetched[0].url, "fetched_at": max(f.fetched_at for f in hist_fetched), "stale": any(f.stale for f in hist_fetched)})
     where = f"{loc['state']}"
 
     if not series:
+        span = f"in the last {s.mandi_days} days" if hist_complete else "today (earlier days could not be checked: the history source did not respond)"
         return ToolResult(
-            f"MANDI PRICES: no published records for {commodity} in {where} today "
+            f"MANDI PRICES: no published records for {commodity} in {where} {span} "
             f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices.",
             True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 
     sig = signal(series)
     latest_date = series[-1]["date"]
-    latest_recs = [r for r in records if _same_day(r.get("arrival_date"), latest_date)]
+    latest_recs = [r for r in records + history if _same_day(r.get("arrival_date"), latest_date)]
     dist = norm_name(loc.get("district") or loc.get("name") or "")
 
     def row(r):
@@ -145,10 +180,10 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     if sig["signal"] != "INSUFFICIENT_DATA":
         lines.append(
             f"SIGNAL (computed in code): {sig['signal']} - latest Rs {sig['latest']:.0f} on {sig['latest_date']} vs average of earlier days Rs {sig['baseline_mean']:.0f} "
-            f"({sig['pct_vs_baseline']} %), trend {sig['trend_per_day']} Rs/quintal per day over {sig['points']} days"
+            f"({sig['pct_vs_baseline']} %), trend {sig['trend_per_day']} Rs/quintal per day over {sig['points']} days. This compares today with recent days; it does not predict future prices."
         )
     else:
-        lines.append(f"SIGNAL: INSUFFICIENT_DATA ({sig['points']} day of prices; need 3). This source publishes only the current day, so say plainly that a price trend is not available and report today's prices and the market position only.")
+        lines.append(f"SIGNAL: INSUFFICIENT_DATA ({sig['points']} day(s) of prices; need 3). Say plainly that a price trend is not available and report today's prices and the market position only.")
     district_label = loc.get("district") or loc["name"]
     if near:
         lines.append(f"MARKETS in {district_label} on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f}" for m in near))
@@ -186,9 +221,9 @@ def get_cross_check(profile: dict, text: str = "") -> ToolResult:
     notes = cross_check(price, wx, m.facts.get("position"))
     decision = price.get("signal", "INSUFFICIENT_DATA")
     pos = m.facts.get("position") or {}
-    if decision == "INSUFFICIENT_DATA":  # this source publishes only today's prices: say what we CAN decide on
+    if decision == "INSUFFICIENT_DATA":  # too few days of prices for a trend: say what we CAN decide on
         where = f"MARKET POSITION {pos['label']} ({pos['pct_vs_state_median']} % vs state median)" if pos.get("label") else "no local market position either"
-        lines = [f"DECISION (computed in code): NO PRICE TREND (the source publishes only today's prices); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
+        lines = [f"DECISION (computed in code): NO PRICE TREND (fewer than 3 days of prices available); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
     else:
         lines = [f"DECISION (computed in code): {decision}"]
     lines += [f"NOTE: {n}" for n in notes]

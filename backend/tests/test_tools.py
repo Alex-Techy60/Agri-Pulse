@@ -5,7 +5,7 @@ import app.tools.location as location
 import app.tools.mandi as mandi_mod
 import app.tools.weather as weather_mod
 from app.core.config import Settings
-from app.tools import NeedsInput, PlaceNotFound
+from app.tools import NeedsInput, PlaceNotFound, SourceUnavailable
 from app.tools.http import Fetched
 
 GEO = {"results": [{"name": "Nashik", "latitude": 19.99, "longitude": 73.78, "admin1": "Maharashtra", "admin2": "Nashik", "country_code": "IN"}]}
@@ -156,7 +156,63 @@ def test_mandi_fetches_once_not_per_day():
 
     install(routes)
     mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
-    assert len(calls) == 1 and "filters[state]" in calls[0] and "filters[commodity]" in calls[0] and not any("arrival_date" in k.lower() for k in calls[0])
+    today_calls = [c for c in calls if "sort[Arrival_Date]" not in c]
+    assert len(today_calls) == 1 and "filters[state]" in today_calls[0] and "filters[commodity]" in today_calls[0]
+    assert len(calls) == 2  # one sorted history call, never one per day: the API rate limits bursts
+
+
+def history_routes(prices_by_days_ago, today_prices=(2500, 2400, 2600), fail=False):
+    """The two real resources: today's (lower-case filters, no date) and history (Title-case filters, date honoured)."""
+    def routes(url, params):
+        if "geocoding" in url:
+            return GEO
+        if "open-meteo" in url:
+            return forecast(rain=[0, 0, 0, 0, 0, 0, 0])
+        if "sort[Arrival_Date]" not in params:
+            return {"records": mandi_records({dt.date.today().strftime("%d/%m/%Y"): list(today_prices)})}
+        if fail:
+            raise SourceUnavailable("history down")
+        return {"records": [r for off, prices in sorted(prices_by_days_ago.items()) for r in mandi_records({(dt.date.today() - dt.timedelta(days=off)).strftime("%d/%m/%Y"): prices})]}
+    return routes
+
+
+def test_history_resource_gives_a_real_trend_and_its_own_source():
+    install(history_routes({1: [2000], 2: [2000], 3: [2000]}))
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert r.facts["price"]["signal"] == "SELL_NOW" and r.facts["price"]["points"] == 4
+    assert any(s["name"] == "data.gov.in Agmarknet history" for s in r.sources)
+    assert r.facts["position"] and "SIGNAL (computed in code): SELL_NOW" in r.text
+
+
+def test_history_failure_degrades_to_today_with_honest_no_trend():
+    install(history_routes({}, fail=True))
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert r.ok and r.facts["price"]["signal"] == "INSUFFICIENT_DATA" and "trend is not available" in r.text
+    assert not any("history" in s["name"] for s in r.sources)
+
+
+def test_history_failure_never_claims_no_records_it_could_not_check():
+    install(history_routes({}, today_prices=(), fail=True))
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert "could not be checked" in r.text
+
+
+def test_history_rows_outside_the_window_or_another_commodity_are_not_used():
+    def routes(url, params):
+        if "sort[Arrival_Date]" in params:
+            day = lambda n: (dt.date.today() - dt.timedelta(days=n)).strftime("%d/%m/%Y")
+            return {"records": [{**mandi_records({day(1): [9000]})[0], "Commodity": "Onion Green"}, *mandi_records({day(40): [9000]})]}
+        return history_routes({})(url, params)
+
+    install(routes)
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert r.facts["price"]["signal"] == "INSUFFICIENT_DATA" and "9000" not in r.text
+
+
+def test_cross_check_uses_the_trend_when_history_exists():
+    install(history_routes({1: [2000], 2: [2000], 3: [2000]}))
+    r = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
+    assert r.facts["decision"] == "SELL_NOW" and "NO PRICE TREND" not in r.text
 
 
 def test_title_case_filter_fallback_still_works_if_lower_matches_nothing():
@@ -237,6 +293,8 @@ def test_results_are_paged_until_total_is_reached():
         if "geocoding" in url:
             return GEO
         off = int(params["offset"])
+        if "sort[Arrival_Date]" in params:
+            return {"records": []}
         seen_offsets.append(off)
         return {"records": [rec(i) for i in range(off, min(off + 500, 700))], "total": 700}
 
