@@ -39,8 +39,6 @@ def test_price_series_and_signal():
     s = pr.build_series(recs)
     assert [p["date"] for p in s] == ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"]
     assert s[0]["modal"] == 2100 and s[0]["n"] == 2
-    sig = pr.signal(s)
-    assert sig["signal"] == "SELL_NOW" and sig["pct_vs_baseline"] > 5 and sig["trend_per_day"] > 0
 
 
 def test_build_series_zero_and_blank_prices():
@@ -61,23 +59,76 @@ def test_build_series_duplicates_average_out():
     assert s == [{"date": "2026-11-01", "modal": 2000, "n": 3}]
 
 
+def mrec(date, market, modal):
+    return {"arrival_date": date, "market": market, "modal_price": modal}
+
+
+def day_records(date, prices, names=None):
+    names = names or [f"M{i}" for i in range(len(prices))]
+    return [mrec(date, n, p) for n, p in zip(names, prices)]
+
+
 def test_two_days_of_data_is_insufficient():
-    s = pr.build_series([rec("01/11/2026", 2000), rec("02/11/2026", 2500)])
-    assert pr.signal(s)["signal"] == "INSUFFICIENT_DATA"
+    recs = day_records("01/11/2026", [2000] * 6) + day_records("02/11/2026", [2500] * 6)
+    assert pr.trend_signal(recs)["signal"] == "INSUFFICIENT_DATA"
+    assert pr.trend_signal([])["signal"] == "INSUFFICIENT_DATA" and pr.trend_signal([])["points"] == 0
 
 
-def test_price_signal_hold_neutral_insufficient():
-    mk = lambda vals: [{"date": f"2026-11-{i + 1:02d}", "modal": v, "n": 3} for i, v in enumerate(vals)]
-    assert pr.signal(mk([2000, 2000, 2000, 1800]))["signal"] == "HOLD"
-    assert pr.signal(mk([2000, 2010, 1990, 2005]))["signal"] == "NEUTRAL"
-    assert pr.signal(mk([2000, 2010]))["signal"] == "INSUFFICIENT_DATA"
-    assert pr.signal([])["signal"] == "INSUFFICIENT_DATA"
+def test_trend_direction_rising_is_hold_falling_is_sell_steady_is_neutral():
+    # Real prices show momentum: a rise tends to continue, so rising -> HOLD and falling -> SELL_NOW (the old rule was the reverse).
+    then = day_records("01/11/2026", [2000] * 6)
+    up = pr.trend_signal(then + day_records("08/11/2026", [2200] * 6))
+    down = pr.trend_signal(then + day_records("08/11/2026", [1800] * 6))
+    flat = pr.trend_signal(then + day_records("08/11/2026", [2040] * 6))
+    assert (up["signal"], up["change_pct"]) == ("HOLD", 10.0) and (down["signal"], down["change_pct"]) == ("SELL_NOW", -10.0) and flat["signal"] == "NEUTRAL"
+    assert up["compared_with"] == "2026-11-01" and up["latest_date"] == "2026-11-08" and up["window_days"] == 7 and up["markets_compared"] == 6
+    assert up["pct_vs_baseline"] == up["change_pct"] and up["baseline_mean"] == 2000 and up["latest"] == 2200 and up["trend_per_day"] > 0
+    edge = pr.trend_signal(then + day_records("08/11/2026", [2100] * 6))  # exactly +5 %: the band edge counts as a move
+    assert edge["signal"] == "HOLD" and pr.trend_signal(then + day_records("08/11/2026", [1900] * 6))["signal"] == "SELL_NOW"
+
+
+def test_a_changing_set_of_reporting_markets_cannot_fake_a_price_move():
+    # Same six markets at an unchanged Rs 2000, but on the second day four dear markets also report. The old daily
+    # average jumped by 40 %; the same-market comparison correctly sees no change.
+    then = day_records("01/11/2026", [2000] * 6)
+    now = day_records("08/11/2026", [2000] * 6) + day_records("08/11/2026", [4000] * 4, ["X1", "X2", "X3", "X4"])
+    old_style = pr.build_series(then + [{"arrival_date": r["arrival_date"], "modal_price": r["modal_price"]} for r in now])
+    assert (old_style[-1]["modal"] - old_style[0]["modal"]) / old_style[0]["modal"] > 0.15
+    got = pr.trend_signal(then + now)
+    assert got["signal"] == "NEUTRAL" and got["change_pct"] == 0.0 and got["markets_compared"] == 6
+
+
+def test_trend_needs_enough_shared_markets_and_a_day_about_a_week_back():
+    then = day_records("01/11/2026", [2000] * 6)
+    assert pr.trend_signal(then + day_records("08/11/2026", [2400] * 4 + [0, 0], ["M0", "M1", "M2", "M3", "X1", "X2"]))["signal"] == "INSUFFICIENT_DATA"  # only 4 shared
+    assert pr.trend_signal(then + day_records("04/11/2026", [2400] * 6))["signal"] == "INSUFFICIENT_DATA"  # 3 days back: not comparable
+    assert pr.trend_signal(then + day_records("15/11/2026", [2400] * 6))["signal"] == "INSUFFICIENT_DATA"  # 14 days back
+    assert pr.trend_signal(then + day_records("10/11/2026", [2400] * 6))["signal"] == "HOLD"  # 9 days back: inside the +/-2 day slack
+    assert pr.trend_signal(then + day_records("06/11/2026", [2400] * 6))["signal"] == "HOLD"  # 5 days back: inside the slack
+
+
+def test_trend_compares_with_the_day_closest_to_a_week_back():
+    recs = day_records("29/10/2026", [1000] * 6) + day_records("01/11/2026", [2000] * 6) + day_records("08/11/2026", [2200] * 6)
+    assert pr.trend_signal(recs)["compared_with"] == "2026-11-01"
+
+
+def test_trend_cleans_real_world_mess_strings_duplicate_rows_outliers_and_zeros():
+    then = day_records("01/11/2026", ["2,000", "2000", 2000, "2000", 2000, 2000, 5, 0, None, "abc"], [f"M{i}" for i in range(6)] + ["M6", "M7", "M8", "M9"])  # Rs 5 = typo, others unusable
+    now = day_records("08/11/2026", [2200] * 6) + [mrec("08/11/2026", "M0", 2400), mrec("08/11/2026", "M0", 2000)]  # two variety rows for M0: median 2200
+    got = pr.trend_signal(then + now)
+    assert got["signal"] == "HOLD" and got["change_pct"] == 10.0 and got["markets_compared"] == 6
+
+
+def test_trend_market_names_match_across_spacing_and_case():
+    then = day_records("01/11/2026", [2000] * 6, [f"APMC Lasalgaon {i} " for i in range(6)])
+    now = day_records("08/11/2026", [2200] * 6, [f"apmc  lasalgaon {i}" for i in range(6)])
+    assert pr.trend_signal(then + now)["markets_compared"] == 6
 
 
 def test_cross_check():
     heavy = {"flags": [{"flag": "HEAVY_RAIN", "day": "2026-11-02", "day_index": 1, "value": 70.0}]}
-    assert pr.cross_check({"signal": "SELL_NOW"}, heavy)[0].startswith("SELL_BEFORE_RAIN")
-    assert pr.cross_check({"signal": "HOLD"}, heavy)[0].startswith("STORAGE_RISK")
+    assert pr.cross_check({"signal": "SELL_NOW"}, heavy)[0].startswith("SELL_BEFORE_RAIN")  # falling prices + heavy rain
+    assert pr.cross_check({"signal": "HOLD"}, heavy)[0].startswith("STORAGE_RISK")  # rising prices + heavy rain: protect or sell part
     assert pr.cross_check({"signal": "HOLD"}, {"flags": []}) == []
     assert "too short" in pr.cross_check({"signal": "INSUFFICIENT_DATA"}, {"flags": []})[0]
 
@@ -139,14 +190,20 @@ def test_cross_check_uses_market_position_when_there_is_no_trend():
     near = {**above, "label": "NEAR_STATE_MEDIAN", "pct_vs_state_median": 1.0}
     none = {"signal": "INSUFFICIENT_DATA"}
     n = pr.cross_check(none, heavy, above)[0]
-    assert n.startswith("SELL_BEFORE_RAIN") and "no price trend" in n and "5.3 %" in n
+    assert n.startswith("SELL_BEFORE_RAIN") and "no clear price trend" in n and "5.3 %" in n
     n = pr.cross_check(none, heavy, below)[0]
     assert n.startswith("STORAGE_RISK") and "7.9 %" in n and "Rs 5500 at Ganjwad (Chandrapur)" in n
     assert pr.cross_check(none, heavy, near)[0].startswith("STORAGE_RISK") and "Rs 5500" not in pr.cross_check(none, heavy, near)[0]
     assert pr.cross_check(none, heavy)[0].startswith("STORAGE_RISK")  # no position at all
     # a real trend always wins over position
-    assert pr.cross_check({"signal": "SELL_NOW"}, heavy, below)[0].startswith("SELL_BEFORE_RAIN") and "recent average" in pr.cross_check({"signal": "SELL_NOW"}, heavy, below)[0]
-    assert pr.cross_check({"signal": "HOLD"}, heavy, above)[0].startswith("STORAGE_RISK")
+    falling = {"signal": "SELL_NOW", "change_pct": -8.2, "window_days": 7}
+    rising = {"signal": "HOLD", "change_pct": 9.4, "window_days": 7}
+    n = pr.cross_check(falling, heavy, below)[0]
+    assert n.startswith("SELL_BEFORE_RAIN") and "fell 8.2 %" in n and "not a price forecast" in n
+    n = pr.cross_check(rising, heavy, above)[0]
+    assert n.startswith("STORAGE_RISK") and "rising (9.4 %" in n and "not a price forecast" in n
+    steady = {"signal": "NEUTRAL", "change_pct": 1.0, "window_days": 7}
+    assert pr.cross_check(steady, heavy, above)[0].startswith("SELL_BEFORE_RAIN") and "no clear price trend" in pr.cross_check(steady, heavy, above)[0]
     # no heavy rain: position alone creates no sell/storage note
     assert [x for x in pr.cross_check(none, {"flags": []}, above) if x.startswith(("SELL", "STORAGE"))] == []
 
@@ -168,3 +225,10 @@ def test_negated_guarantee_is_accepted_with_typographic_apostrophes():
     assert v("I can’t guarantee 100% profit on onions.") == []
     assert v("I can't guarantee profit.") == [] and v("I am unable to guarantee profit.") == []
     assert v("I guarantee a profit.") == ["Makes a guarantee."]
+
+
+def test_trend_evidence_is_per_crop_and_says_when_a_crop_was_not_tested():
+    assert "two times out of three" in pr.trend_evidence("Onion") and "NOT reliable" in pr.trend_evidence("tomato")
+    assert "barely moved" in pr.trend_evidence(" Potato ")
+    for crop in ("Wheat", "", None):
+        assert pr.trend_evidence(crop) == pr.TREND_UNTESTED and "not been checked" in pr.trend_evidence(crop)

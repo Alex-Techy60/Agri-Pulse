@@ -138,8 +138,9 @@ def grounded_dates() -> Validator:
     made-up date whose parts (2026, 11, 03) happen to occur elsewhere in the data. Handles typographic hyphens."""
 
     def check(text: str, context: str = "") -> list[str]:
-        known = set(_ISO_DATE.findall(context.translate(_DASHES)))
-        bad = sorted({d for d in _ISO_DATE.findall(text.translate(_DASHES)) if d not in known})
+        norm = lambda t: _ascii_digits(t).translate(_DASHES)  # Marathi/Hindi digits (२०२६-१०-३०) must equal 2026-10-30
+        known = set(_ISO_DATE.findall(norm(context)))
+        bad = sorted({d for d in _ISO_DATE.findall(norm(text)) if d not in known})
         return [f"These dates are not in the provided data: {', '.join(bad)}. Use only dates from the CONTEXT."] if bad else []
 
     check.wants_context = True  # type: ignore[attr-defined]

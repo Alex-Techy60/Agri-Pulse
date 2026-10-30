@@ -52,7 +52,7 @@ def routes_ok(url, params):
             return {"records": []}
         today = dt.date.today()
         recs = []
-        for off, prices in {0: [2400, 2600], 1: [2000], 2: [2000], 3: [2000]}.items():  # history shape, in case the source ever returns it
+        for off, prices in {0: [2500] * 6, 7: [2000] * 6}.items():  # six markets today and a week ago (the shape a trend needs)
             recs += mandi_records({(today - dt.timedelta(days=off)).strftime("%d/%m/%Y"): prices})
         return {"records": recs}
     raise AssertionError(url)
@@ -90,7 +90,7 @@ def test_mandi_without_key_is_explicit_failure_not_fake_data():
 def test_mandi_tool_signal_and_markets_with_lower_case_filters():
     install(routes_ok)
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
-    assert r.ok and "SIGNAL (computed in code): SELL_NOW" in r.text and "MARKETS in Nashik" in r.text
+    assert r.ok and "SIGNAL (computed in code): HOLD - prices are RISING" in r.text and "MARKETS in Nashik" in r.text
     assert r.facts["commodity"] == "Onion" and r.facts["price"]["signal"] in {"SELL_NOW", "NEUTRAL", "HOLD", "INSUFFICIENT_DATA"}
     assert r.cards[0]["type"] == "prices" and r.cards[0]["unit"] == "Rs/quintal"
 
@@ -161,7 +161,7 @@ def test_mandi_fetches_once_not_per_day():
     assert len(calls) == 2  # one sorted history call, never one per day: the API rate limits bursts
 
 
-def history_routes(prices_by_days_ago, today_prices=(2500, 2400, 2600), fail=False):
+def history_routes(prices_by_days_ago, today_prices=(2500,) * 6, fail=False):
     """The two real resources: today's (lower-case filters, no date) and history (Title-case filters, date honoured)."""
     def routes(url, params):
         if "geocoding" in url:
@@ -177,11 +177,20 @@ def history_routes(prices_by_days_ago, today_prices=(2500, 2400, 2600), fail=Fal
 
 
 def test_history_resource_gives_a_real_trend_and_its_own_source():
-    install(history_routes({1: [2000], 2: [2000], 3: [2000]}))
+    install(history_routes({1: [2000] * 6, 7: [2000] * 6}))
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
-    assert r.facts["price"]["signal"] == "SELL_NOW" and r.facts["price"]["points"] == 4
+    p = r.facts["price"]
+    assert p["signal"] == "HOLD" and p["points"] == 3 and p["change_pct"] == 25.0 and p["markets_compared"] == 6
+    assert p["compared_with"] == (dt.date.today() - dt.timedelta(days=7)).isoformat()
     assert any(s["name"] == "data.gov.in Agmarknet history" for s in r.sources)
-    assert r.facts["position"] and "SIGNAL (computed in code): SELL_NOW" in r.text
+    assert r.facts["position"] and "SIGNAL (computed in code): HOLD - prices are RISING" in r.text and "not a forecast" in r.text
+    assert "same 6 markets moved 25.0 %" in r.text
+
+
+def test_a_falling_week_is_sell_now_and_says_falling():
+    install(history_routes({7: [3000] * 6}))
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert r.facts["price"]["signal"] == "SELL_NOW" and "prices are FALLING" in r.text
 
 
 def test_history_failure_degrades_to_today_with_honest_no_trend():
@@ -210,9 +219,9 @@ def test_history_rows_outside_the_window_or_another_commodity_are_not_used():
 
 
 def test_cross_check_uses_the_trend_when_history_exists():
-    install(history_routes({1: [2000], 2: [2000], 3: [2000]}))
+    install(history_routes({7: [2000] * 6}))
     r = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
-    assert r.facts["decision"] == "SELL_NOW" and "NO PRICE TREND" not in r.text
+    assert r.facts["decision"] == "HOLD" and "NO PRICE TREND" not in r.text
 
 
 def test_title_case_filter_fallback_still_works_if_lower_matches_nothing():
@@ -384,3 +393,22 @@ def test_old_and_alternate_place_names_are_looked_up_under_the_name_the_geocoder
     assert loc_mod.resolve_location({"place": "Ahmednagar, Maharashtra"})["district"] == "Ahmednagar"
     assert loc_mod.resolve_location({"place": "Raipur district, Chhattisgarh"})["name"] == "Raipur"
     assert asked == ["Ahilyanagar", "Raipur"]
+
+
+def test_history_window_reaches_the_days_the_trend_compares_with():
+    # The trend compares with a day 5-9 days back, so the history fetch must cover at least that far.
+    assert Settings().mandi_days >= 10
+    for back in (5, 6, 7, 8, 9):
+        install(history_routes({back: [2000] * 6}))
+        r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+        assert r.facts["price"]["signal"] == "HOLD" and r.facts["price"]["window_days"] == back, back
+    install(history_routes({10: [2000] * 6}))  # 10 days back is out of range: honest "no trend", never a guess
+    assert mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"}).facts["price"]["signal"] == "INSUFFICIENT_DATA"
+
+
+def test_signal_text_carries_the_per_crop_evidence_and_the_decision_explains_itself():
+    install(history_routes({7: [2000] * 6}))
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    assert "not a forecast" in r.text and "two times out of three" in r.text
+    d = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
+    assert "DECISION (computed in code): HOLD (prices rising, 25.0 % in 7 days; a recent trend, not a forecast)" in d.text

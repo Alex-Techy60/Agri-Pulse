@@ -15,7 +15,7 @@ import logging
 import re
 
 from app.core.config import get_settings
-from app.decision.price_rules import build_series, clean_rows, cross_check, market_position, norm_name, parse_date, signal
+from app.decision.price_rules import MIN_SHARED_MARKETS, TREND_BAND_PCT, build_series, clean_rows, cross_check, market_position, norm_name, parse_date, trend_evidence, trend_signal
 from app.tools import NeedsInput, SourceUnavailable, ToolResult, guarded
 from app.tools.http import get_json
 from app.tools.location import resolve_location
@@ -162,7 +162,7 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
             True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 
-    sig = signal(series)
+    sig = trend_signal(records + history)
     latest_date = series[-1]["date"]
     latest_recs = [r for r in records + history if _same_day(r.get("arrival_date"), latest_date)]
     dist = norm_name(loc.get("district") or loc.get("name") or "")
@@ -178,12 +178,14 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     lines = [f"MANDI PRICES for {commodity} in {where} - data.gov.in Agmarknet, fetched {src['fetched_at']}" + (" [STALE]" if src["stale"] else ""), "Unit: Rs per quintal. Daily average of modal prices across reporting markets:"]
     lines += [f"{p['date']}: Rs {p['modal']:.0f} ({p['n']} markets)" for p in series]
     if sig["signal"] != "INSUFFICIENT_DATA":
+        word = {"HOLD": "prices are RISING", "SELL_NOW": "prices are FALLING", "NEUTRAL": "prices are roughly STEADY"}[sig["signal"]]
         lines.append(
-            f"SIGNAL (computed in code): {sig['signal']} - latest Rs {sig['latest']:.0f} on {sig['latest_date']} vs average of earlier days Rs {sig['baseline_mean']:.0f} "
-            f"({sig['pct_vs_baseline']} %), trend {sig['trend_per_day']} Rs/quintal per day over {sig['points']} days. This compares today with recent days; it does not predict future prices."
+            f"SIGNAL (computed in code): {sig['signal']} - {word}: the same {sig['markets_compared']} markets moved {sig['change_pct']} % between {sig['compared_with']} and {sig['latest_date']} "
+            f"({sig['window_days']} days). Rule: a rise of {TREND_BAND_PCT:g} % or more = HOLD, a fall of {TREND_BAND_PCT:g} % or more = SELL_NOW, otherwise NEUTRAL. "
+            f"This is a recent trend, not a forecast. {trend_evidence(commodity)} Say both in one or two short sentences."
         )
     else:
-        lines.append(f"SIGNAL: INSUFFICIENT_DATA ({sig['points']} day(s) of prices; need 3). Say plainly that a price trend is not available and report today's prices and the market position only.")
+        lines.append(f"SIGNAL: INSUFFICIENT_DATA (no comparable day about a week earlier with at least {MIN_SHARED_MARKETS} markets in common). Say plainly that a price trend is not available and report today's prices and the market position only.")
     district_label = loc.get("district") or loc["name"]
     if near:
         lines.append(f"MARKETS in {district_label} on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f}" for m in near))
@@ -223,9 +225,10 @@ def get_cross_check(profile: dict, text: str = "") -> ToolResult:
     pos = m.facts.get("position") or {}
     if decision == "INSUFFICIENT_DATA":  # too few days of prices for a trend: say what we CAN decide on
         where = f"MARKET POSITION {pos['label']} ({pos['pct_vs_state_median']} % vs state median)" if pos.get("label") else "no local market position either"
-        lines = [f"DECISION (computed in code): NO PRICE TREND (fewer than 3 days of prices available); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
+        lines = [f"DECISION (computed in code): NO PRICE TREND (no comparable day about a week earlier); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
     else:
-        lines = [f"DECISION (computed in code): {decision}"]
+        what = {"HOLD": "prices rising", "SELL_NOW": "prices falling", "NEUTRAL": "prices roughly steady"}.get(decision, decision)
+        lines = [f"DECISION (computed in code): {decision} ({what}, {price.get('change_pct')} % in {price.get('window_days')} days; a recent trend, not a forecast)"]
     lines += [f"NOTE: {n}" for n in notes]
     return ToolResult("\n".join(lines), True, [], [], {"decision": decision, "notes": notes})
 

@@ -1,7 +1,11 @@
-"""Deterministic sell/hold signal from REAL mandi price history, plus weather cross-checks.
+"""Deterministic price-trend signal from REAL mandi price history, plus weather cross-checks.
 
 The LLM explains these results; it does not compute or override them.
-HEURISTIC thresholds (+/-5 % vs recent average) are tunable; cite or justify them in the pitch.
+
+The signal is a TREND-FOLLOWING indicator, not a forecast. It compares the SAME markets today and about a week ago:
+rising prices -> HOLD, falling prices -> SELL_NOW, small moves -> NEUTRAL. Why this direction: a year of real Agmarknet
+prices (6 series) showed momentum (a move tends to continue), and the earlier rule "5 % above the recent average -> sell"
+pointed the wrong way (see scripts/backtest_signal.py; README "Status" has the measured numbers and their limits).
 """
 from __future__ import annotations
 
@@ -9,9 +13,10 @@ import datetime as dt
 import re
 import unicodedata
 
-SELL_ABOVE_PCT = 5.0
-HOLD_BELOW_PCT = -5.0
-MIN_POINTS = 3
+TREND_BAND_PCT = 5.0  # |7-day move| below this is NEUTRAL (chosen on the older 60 % of a year of data, judged on the newest 40 %)
+TREND_DAYS = 7  # compare today with the day closest to a week earlier ...
+TREND_DAY_SLACK = 2  # ... within +/- this many days (markets close on some days)
+MIN_SHARED_MARKETS = 5  # markets that must report on both days; fewer = no trend, never a guess
 OUTLIER_FACTOR = 10.0
 POSITION_BAND_PCT = 5.0  # local median within +/-5 % of the state median counts as NEAR
 
@@ -70,34 +75,87 @@ def _drop_outliers_keep(vals: list[float]) -> set:
     return set(_drop_outliers(vals))
 
 
-def signal(series: list[dict]) -> dict:
-    n = len(series)
-    if n < MIN_POINTS:
-        return {"signal": "INSUFFICIENT_DATA", "points": n, "latest": series[-1]["modal"] if n else None, "latest_date": series[-1]["date"] if n else None}
-    latest = series[-1]["modal"]
-    prev = [s["modal"] for s in series[:-1]]
-    base = sum(prev) / len(prev)
-    pct = (latest - base) / base * 100 if base else 0.0
-    xs = list(range(n))
-    xm, ym = sum(xs) / n, sum(s["modal"] for s in series) / n
-    den = sum((x - xm) ** 2 for x in xs) or 1.0
-    slope = sum((x - xm) * (s["modal"] - ym) for x, s in zip(xs, series)) / den
-    sig = "SELL_NOW" if pct >= SELL_ABOVE_PCT else "HOLD" if pct <= HOLD_BELOW_PCT else "NEUTRAL"
+# What the one-year backtest (scripts/backtest_signal.py, newest 40 % of days, unseen when the rule was chosen) showed per crop.
+# Words, not numbers, so the answer stays grounded; the measured figures live in the README. Crops not listed were not tested.
+TREND_EVIDENCE = {
+    "onion": "In a one-year check on real onion prices, a rising week was followed by a further rise about two times out of three.",
+    "tomato": "In a one-year check on real tomato prices this trend rule was NOT reliable, so treat it as a weak hint only.",
+    "potato": "Potato prices barely moved in the one-year check, so this rule has little to say about potato.",
+}
+TREND_UNTESTED = "This trend rule has not been checked for this crop, so treat it as a weak hint."
+
+
+def trend_evidence(commodity: str) -> str:
+    return TREND_EVIDENCE.get(str(commodity or "").strip().lower(), TREND_UNTESTED)
+
+
+def _median(xs: list[float]) -> float:
+    xs = sorted(xs)
+    return xs[len(xs) // 2] if len(xs) % 2 else (xs[len(xs) // 2 - 1] + xs[len(xs) // 2]) / 2
+
+
+def market_day_prices(records: list[dict]) -> dict[dt.date, dict[str, float]]:
+    """records -> {date: {market: price}}. One price per market and day (median over its variety/grade rows); values 10x away
+    from that day's median are dropped; days with fewer than 3 markets are ignored."""
+    by: dict[tuple[dt.date, str], list[float]] = {}
+    for r in records:
+        d, p = parse_date(r.get("arrival_date", "")), to_float(r.get("modal_price"))
+        m = " ".join(str(r.get("market") or "").split()).lower()
+        if d and p and p > 0 and m:
+            by.setdefault((d, m), []).append(p)
+    days: dict[dt.date, dict[str, float]] = {}
+    for (d, m), v in by.items():
+        days.setdefault(d, {})[m] = _median(v)
+    out = {}
+    for d, mk in days.items():
+        keep = set(_drop_outliers(list(mk.values())))
+        mk = {m: p for m, p in mk.items() if p in keep}
+        if len(mk) >= 3:
+            out[d] = mk
+    return out
+
+
+def trend_signal(records: list[dict]) -> dict:
+    """7-day trend of the SAME markets: median over markets reporting on both days of (price today / price then - 1).
+    A shifting set of reporting markets therefore cannot fake a price move (the old daily-average series could)."""
+    days = market_day_prices(records)
+    order = sorted(days)
+    empty = {"signal": "INSUFFICIENT_DATA", "points": len(order), "latest": None, "latest_date": None}
+    if not order:
+        return empty
+    t = order[-1]
+    latest = round(sum(days[t].values()) / len(days[t]))
+    empty.update(latest=latest, latest_date=t.isoformat())
+    cands = [d for d in order if abs((t - d).days - TREND_DAYS) <= TREND_DAY_SLACK and d < t]
+    if not cands:
+        return empty
+    a = min(cands, key=lambda d: abs((t - d).days - TREND_DAYS))
+    shared = [m for m in days[t] if m in days[a]]
+    if len(shared) < MIN_SHARED_MARKETS:
+        return empty
+    pct = _median([(days[t][m] / days[a][m] - 1) * 100 for m in shared])
+    gap = (t - a).days
+    base = sum(days[a][m] for m in shared) / len(shared)
+    now = sum(days[t][m] for m in shared) / len(shared)
     return {
-        "signal": sig,
-        "points": n,
+        "signal": "HOLD" if pct >= TREND_BAND_PCT else "SELL_NOW" if pct <= -TREND_BAND_PCT else "NEUTRAL",
+        "points": len(order),
         "latest": latest,
-        "latest_date": series[-1]["date"],
-        "baseline_mean": round(base, 0),
-        "pct_vs_baseline": round(pct, 1),
-        "trend_per_day": round(slope, 1),
+        "latest_date": t.isoformat(),
+        "baseline_mean": round(base),  # kept for the UI card: average price of the compared markets on the earlier day
+        "pct_vs_baseline": round(pct, 1),  # same number as change_pct (kept for the UI card)
+        "change_pct": round(pct, 1),
+        "compared_with": a.isoformat(),
+        "window_days": gap,
+        "markets_compared": len(shared),
+        "trend_per_day": round((now - base) / gap, 1),
     }
 
 
 def cross_check(price: dict, weather: dict, position: dict | None = None) -> list[str]:
-    """Combine price signal with weather risk. Pure function; returns plain-English notes.
-    With a price TREND (>= 3 days of history) the trend decides. When the history source fails there is no trend, so without a
-    trend the farmer's market position today (vs the state median) is used instead, and the note says so."""
+    """Combine the price trend with weather risk. Pure function; returns plain-English notes. SELL_NOW means prices have been
+    FALLING, HOLD means RISING (trend-following). Without a trend the farmer's market position today (vs the state median)
+    is used instead, and the note says so. Neither is a price forecast."""
     notes: list[str] = []
     heavy_soon = [f for f in weather.get("flags", []) if f["flag"] == "HEAVY_RAIN" and f["day_index"] <= 3]
     sig = price.get("signal")
@@ -106,10 +164,12 @@ def cross_check(price: dict, weather: dict, position: dict | None = None) -> lis
         f = heavy_soon[0]
         rain = f"heavy rain ({f['value']} mm) forecast on {f['day']}"
         if sig == "SELL_NOW":
-            notes.append(f"SELL_BEFORE_RAIN: {rain}; prices are above the recent average, so selling before the rain is favourable.")
-        elif sig in (None, "INSUFFICIENT_DATA") and label == "ABOVE_STATE_MEDIAN":
-            notes.append(f"SELL_BEFORE_RAIN: {rain}; no price trend is available, but your district's price today is {position['pct_vs_state_median']} % above the state median, so selling before the rain is favourable.")
-        elif sig in (None, "INSUFFICIENT_DATA") and label == "BELOW_STATE_MEDIAN":
+            notes.append(f"SELL_BEFORE_RAIN: {rain}; prices fell {abs(price.get('change_pct', 0))} % over the last {price.get('window_days', 7)} days and rain can damage stored produce, so selling before the rain is worth considering. This is a recent trend, not a price forecast.")
+        elif sig == "HOLD":
+            notes.append(f"STORAGE_RISK: {rain}; prices have been rising ({price.get('change_pct', 0)} % over the last {price.get('window_days', 7)} days), but rain can damage stored produce: protect it, or sell part of it before the rain. This is a recent trend, not a price forecast.")
+        elif sig in (None, "INSUFFICIENT_DATA", "NEUTRAL") and label == "ABOVE_STATE_MEDIAN":
+            notes.append(f"SELL_BEFORE_RAIN: {rain}; no clear price trend, but your district's price today is {position['pct_vs_state_median']} % above the state median and rain can damage stored produce, so selling before the rain is worth considering.")
+        elif sig in (None, "INSUFFICIENT_DATA", "NEUTRAL") and label == "BELOW_STATE_MEDIAN":
             notes.append(f"STORAGE_RISK: {rain}; your district's price today is {abs(position['pct_vs_state_median'])} % below the state median. The best price today is Rs {position['best_price']} at {position['best_market']} ({position['best_district']}); protect stored produce or consider selling early.")
         else:
             notes.append(f"STORAGE_RISK: {rain}; protect stored produce or consider selling early.")

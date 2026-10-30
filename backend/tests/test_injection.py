@@ -50,3 +50,14 @@ def test_grounded_dates_rejects_invented_dates_and_accepts_typographic_hyphens()
     bad = v("Rain on 2026-11-03 and 2026-11-02.", ctx)
     assert bad and "2026-11-03" in bad[0] and "2026-11-02" not in bad[0]
     assert v("No dates here, 30 mm.", ctx) == [] and v("x 12026-11-02 y", ctx) == []
+
+
+def test_grounded_dates_accepts_indic_digits_and_still_rejects_invented_dates():
+    from app.guardrails.validators import grounded_dates
+
+    v = grounded_dates()
+    ctx = "2026-10-30: max 30 C. compared with 2026-10-23"
+    assert v("आज २०२६-१०-३० ला पाऊस", ctx) == []  # २०२६-१०-३० (Marathi/Hindi digits)
+    assert v("तारीख २०२६‑१०‑२३", ctx) == []  # Devanagari digits + non-breaking hyphens
+    bad = v("तारीख २०२६-१०-३१", ctx)  # २०२६-१०-३१ is not in the data
+    assert bad and "2026-10-31" in bad[0]

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     mandi_resource_id: str = "9ef84268-d588-465a-a308-a864a43d0070"  # confirm with `make check-live`
     mandi_history_resource_id: str = "35985678-0d79-46b4-9ed6-6f13308a1d24"  # dated prices; the resource above is today-only
     mandi_filter_style: str = "auto"  # auto | lower | title  (data.gov.in field-name case)
-    mandi_days: int = 7
+    mandi_days: int = 10  # history window: must reach the day the 7-day trend compares with (5-9 days back)
     cache_ttl_s: float = 900.0  # live-data cache (stale real data is shown labelled if the source is down)
     tool_timeout_s: float = 8.0
     cors_origins: str = "http://localhost:5173"
