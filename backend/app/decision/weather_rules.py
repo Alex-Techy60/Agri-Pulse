@@ -1,18 +1,18 @@
 """Deterministic weather risk rules. LLM never decides these; code does.
 
-Thresholds tagged IMD are the India Meteorological Department's published
-classification; tagged HEURISTIC are common field guidance and MUST be replaced or
-cited with an ICAR / state agriculture university source before the final pitch.
+Every threshold below is tagged with its basis (full table + URLs: docs/SOURCES.md):
+  IMD        = India Meteorological Department glossary definition (verified against the glossary text).
+  HEURISTIC  = practical guidance WITHOUT a verified Indian primary source; justification given inline.
 """
 from __future__ import annotations
 
-IMD_HEAVY_RAIN_MM = 64.5  # IMD: heavy rainfall >= 64.5 mm in 24 h
-IMD_RAINY_DAY_MM = 2.5  # IMD: a "rainy day" has >= 2.5 mm
-IMD_HEAT_C = 40.0  # IMD heat-wave criterion for plains: Tmax >= 40 C
-IMD_COLD_C = 4.0  # IMD cold-wave criterion for plains: Tmin <= 4 C
-SPRAY_MAX_WIND_KMH = 15.0  # HEURISTIC: drift risk above this wind speed
-SPRAY_MAX_RAIN_PROB = 40  # HEURISTIC: % chance of rain; wash-off risk
-IRRIGATION_SKIP_RAIN_MM = 10.0  # HEURISTIC: rain expected in next 48 h
+IMD_HEAVY_RAIN_MM = 64.5  # IMD glossary: "Heavy rain" = 64.5 to 124.4 mm in a day (lower bound used)
+IMD_RAINY_DAY_MM = 2.5  # IMD glossary: "Rainy Day" = 2.5 mm or more in a day
+IMD_HEAT_C = 40.0  # IMD: a heat wave is declared only when Tmax reaches >= 40 C in plains (it ALSO needs a +4..+6 C departure from normal, which we do not check), so this is a heat-STRESS flag, not a heat-wave declaration
+IMD_COLD_C = 4.0  # HEURISTIC low-temperature stress flag. NOT an IMD cold-wave criterion (IMD uses wind-chill minimum temperature and departure from normal); crop-specific limits come from crop_rules
+SPRAY_MAX_WIND_KMH = 15.0  # HEURISTIC: no Indian limit found; sits just under the ~16 km/h upper end of the 3-16 km/h window in Canadian guidance (Saskatchewan/OMAFRA). Product label always governs
+SPRAY_MAX_RAIN_PROB = 40  # HEURISTIC: practical wash-off risk cut-off on the daily max rain probability; conservative on purpose (a skipped spray day costs less than a washed-off one)
+IRRIGATION_SKIP_RAIN_MM = 10.0  # HEURISTIC: FAO gives effective-rainfall formulas but no fixed skip limit; 10 mm in 48 h is roughly 2 days of typical crop water use (ET0 about 4-5 mm/day)
 
 
 def _val(lst, i):
@@ -46,11 +46,11 @@ def analyze(days: list[dict]) -> dict:
     flags = []
     for d in days:
         if d["rain_mm"] is not None and d["rain_mm"] >= IMD_HEAVY_RAIN_MM:
-            flags.append({"flag": "HEAVY_RAIN", "day": d["date"], "day_index": d["i"], "value": d["rain_mm"], "unit": "mm", "rule": f">= {IMD_HEAVY_RAIN_MM} mm/24h (IMD)"})
+            flags.append({"flag": "HEAVY_RAIN", "day": d["date"], "day_index": d["i"], "value": d["rain_mm"], "unit": "mm", "rule": f">= {IMD_HEAVY_RAIN_MM} mm/24h (IMD heavy rain)"})
         if d["tmax"] is not None and d["tmax"] >= IMD_HEAT_C:
-            flags.append({"flag": "HEAT_STRESS", "day": d["date"], "day_index": d["i"], "value": d["tmax"], "unit": "C", "rule": f"Tmax >= {IMD_HEAT_C} C (IMD heat-wave criterion)"})
+            flags.append({"flag": "HEAT_STRESS", "day": d["date"], "day_index": d["i"], "value": d["tmax"], "unit": "C", "rule": f"Tmax >= {IMD_HEAT_C} C (IMD minimum temperature for a plains heat wave; departure from normal not checked)"})
         if d["tmin"] is not None and d["tmin"] <= IMD_COLD_C:
-            flags.append({"flag": "COLD_STRESS", "day": d["date"], "day_index": d["i"], "value": d["tmin"], "unit": "C", "rule": f"Tmin <= {IMD_COLD_C} C (IMD cold-wave criterion)"})
+            flags.append({"flag": "COLD_STRESS", "day": d["date"], "day_index": d["i"], "value": d["tmin"], "unit": "C", "rule": f"Tmin <= {IMD_COLD_C} C (heuristic low-temperature stress threshold)"})
 
     spray_ok = [
         d["date"]
@@ -78,7 +78,7 @@ def analyze(days: list[dict]) -> dict:
     }
 
 
-# Rain-history rules. HEURISTIC thresholds: cite or justify in docs/SOURCES.md (task D1).
+# Rain-history rules (HEURISTIC; justification in docs/SOURCES.md). 'Dry' = under one IMD rainy day's worth (2.5 mm) in 7 days.
 DRY_PAST7_MM = 2.5
 DRY_NEXT7_MM = 5.0
 IRRIGATION_URGENT_PAST14_MM = 5.0
