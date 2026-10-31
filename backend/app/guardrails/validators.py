@@ -96,8 +96,19 @@ def _norm_num(n: str) -> str:
     return (str(float(n)).rstrip("0").rstrip(".")) if "." in n else str(int(n))
 
 
+# LLMs (Hindi and Marathi answers especially) write 5500 as "5 500" or with a thin/no-break space. Read as two numbers that gave
+# "500 is not in the data", the critique never explained why, and every rewrite repeated it until the safe fallback. Left side
+# is 1-3 digits not preceded by a digit, dot, comma, hyphen, colon or slash, so "2026-11-02 100 mm" is never merged.
+_GROUPED = re.compile(r"(?<![\d.,:/\-])\d{1,3}(?:[ \u00a0\u202f\u2009]\d{3})+(?!\d)")
+
+
+def _plain_number_text(s: str) -> str:
+    s = _GROUPED.sub(lambda m: re.sub(r"\D", "", m.group(0)), _ascii_digits(s))
+    return re.sub(r"(?<=\d),(?=\d{3}\b)", "", s)  # 2,450 -> 2450
+
+
 def numbers_in(s: str) -> set[str]:
-    s = re.sub(r"(?<=\d),(?=\d{3}\b)", "", _ascii_digits(s))  # 2,450 -> 2450
+    s = _plain_number_text(s)
     return {_norm_num(n) for n in _NUM.findall(s)}
 
 
@@ -112,6 +123,40 @@ def grounded_numbers(min_value: float = 10.0) -> Validator:
             allowed.update({str(int(f)), str(round(f))})
         bad = sorted(n for n in numbers_in(text) if (float(n) >= min_value or "." in n) and n not in allowed)
         return [f"These numbers are not in the provided data: {', '.join(bad)}. Use only numbers from the CONTEXT."] if bad else []
+
+    check.wants_context = True  # type: ignore[attr-defined]
+    return check
+
+
+_AMT = r"(\d+(?:\.\d+)?)"
+_MONEY = re.compile(rf"(?:Rs\.?|\u20b9)\s*{_AMT}|{_AMT}\s*(?:rupees|\u0930\u0941\u092a\u092f\u0947|\u0930\u0941\u092a\u092f\u093e|\u0930\u0941\u092a\u090f|\u0930\u0941\.?(?!\w))", re.I)
+_PERCENT = re.compile(rf"{_AMT}\s*(?:%|\u091f\u0915\u094d\u0915\u0947|\u092a\u094d\u0930\u0924\u093f\u0936\u0924|percent)", re.I)
+_MM = re.compile(rf"{_AMT}\s*(?:mm\b|\u092e\u093f\u092e\u0940|\u092e\u093f\.\u092e\u0940)", re.I)
+
+
+def _unit_pairs(text: str) -> set[tuple[str, str]]:
+    text = _plain_number_text(text)
+    out = set()
+    for unit, rx in (("Rs", _MONEY), ("%", _PERCENT), ("mm", _MM)):
+        for m in rx.finditer(text):
+            n = next(g for g in m.groups() if g)
+            out.add((unit, _norm_num(n)))
+    return out
+
+
+def grounded_units(min_value: float = 10.0) -> Validator:
+    """A rupee, percent or millimetre figure must be that same kind of figure in the CONTEXT. grounded_numbers only checks that
+    the digits occur somewhere, so "Rs 3.7" (a percent change) or "3700 mm" (a price) would pass it. Same small-integer
+    exemption and rounding allowance as grounded_numbers; unrecognised units/languages are simply not checked here."""
+
+    def check(text: str, context: str = "") -> list[str]:
+        allowed = _unit_pairs(context)
+        for u, n in list(allowed):
+            f = float(n)
+            allowed.update({(u, str(int(f))), (u, str(round(f)))})
+        known = numbers_in(context)  # a number absent from the context entirely is grounded_numbers' finding, not ours
+        bad = sorted(f"{n} {u}" for u, n in _unit_pairs(text) if (float(n) >= min_value or "." in n) and n in known and (u, n) not in allowed)
+        return [f"These figures are in the data but not as that kind of amount: {', '.join(bad)}. Use each number only with its own unit from the CONTEXT."] if bad else []
 
     check.wants_context = True  # type: ignore[attr-defined]
     return check

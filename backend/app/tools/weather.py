@@ -57,6 +57,12 @@ def get_weather(profile: dict) -> ToolResult:
         lines.append("RISK FLAGS: none in the next 7 days")
     lines.append("SPRAY-SAFE DAYS (wind <= 15 km/h, rain chance <= 40 %, rain < 2.5 mm): " + (", ".join(a["spray_ok_days"]) or "none"))
     lines.append(f"IRRIGATION: rain expected in next 48 h = {a['rain_next_48h_mm']} mm -> {a['irrigation']}")
+    wb = a["water_balance"]
+    if wb:
+        lines.append(
+            f"WATER BALANCE next {wb['days']} days: forecast rain {wb['rain_mm']} mm vs reference crop water demand (ET0, grass reference, not your crop's exact need) {wb['et0_mm']} mm "
+            f"-> {wb['label']} (rain minus demand = {wb['balance_mm']} mm)"
+        )
     if a["dry_spell"]:
         lines.append("DRY SPELL: no rainy day (>= 2.5 mm) in the next 7 days")
 

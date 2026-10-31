@@ -63,6 +63,7 @@ def test_weather_tool_builds_facts_cards_sources():
     r = weather_mod.weather("", {"place": "Nashik, Maharashtra"})
     assert r.ok and "RISK FLAG HEAVY_RAIN on 2026-11-02: 70.0 mm" in r.text
     assert "SOIL MOISTURE" in r.text and r.cards[0]["type"] == "forecast"
+    assert "WATER BALANCE next 7 days: forecast rain 70.0 mm vs reference crop water demand" in r.text and "RAIN_COVERS_DEMAND" in r.text
     assert r.facts["location"]["state"] == "Maharashtra" and any(s["name"] == "Open-Meteo forecast" for s in r.sources)
 
 

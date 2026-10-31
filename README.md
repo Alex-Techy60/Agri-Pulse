@@ -40,7 +40,7 @@ Place lookup for "use my location": © OpenStreetMap contributors (ODbL) via Nom
 | Pre-event generic boilerplate | Built during FORGE '26 (after 30 Oct 7:30 PM IST) |
 |---|---|
 | LLM client w/ provider fallback, vector-store wrapper, SSE API shell, React/Vite shell, Docker/CI files | Farm domain, live weather/soil + mandi tools, decision rules, grounded-number guardrail, parallel tools, ask-for-missing-input, source-failure handling, profile + forecast/price cards UI |
-| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, Devanagari place and crop input (native-script geocoding), "use my location" button with reverse geocoding, Hindi and Marathi suggested questions, UI messages, safe answers and router keywords, last-complete-day rule for half-filled mandi days, offline answers without internals, crop photo upload, phone layout, Groq reserve-model tier, LLM quota probe in `make check-live`, hermetic tests (190, no network or keys needed) |
+| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, Devanagari place and crop input (native-script geocoding), "use my location" button with reverse geocoding, Hindi and Marathi suggested questions, UI messages, safe answers and router keywords, last-complete-day rule for half-filled mandi days, offline answers without internals, crop photo upload, phone layout, Groq reserve-model tier, LLM quota probe in `make check-live`, 7-day water balance (rain vs reference evapotranspiration), unit-aware number grounding, spaced-thousands fix, hermetic tests (196, no network or keys needed) |
 
 The commit history is the evidence: `git log` shows the work added after the starter.
 
@@ -60,8 +60,8 @@ Each row is `correct/total (share, 95 % confidence interval)`. Small samples hav
 | Sell/hold label equal to an independent re-computation from the written rule, same 7 series | 7/7 (100 %, CI 65-100); trend % within 0.15 points 7/7 |
 | Weather card equal to a direct Open-Meteo call, 6 places x 7 days x 4 fields | 168/168 (100 %, CI 98-100) |
 | Keyword router (LLM down) picks the right intent, 30 questions in English, Hindi, Marathi, Hinglish | 30/30 (100 %, CI 89-100); the first run found 28/30 and keywords were added, so this is not a fair test |
-| Guardrails flag unsafe or ungrounded answers (invented price, guarantee, dose, brand, injection echo, invented date) | 15/15 (100 %, CI 80-100) |
-| Guardrails leave grounded or properly negated answers alone | 11/11 (100 %, CI 74-100) |
+| Guardrails flag unsafe or ungrounded answers (invented price, guarantee, dose, brand, injection echo, invented date, real number with the wrong unit) | 18/18 (100 %, CI 82-100); the 3 wrong-unit cases were written after the unit check, so this is not a fair test |
+| Guardrails leave grounded or properly negated answers alone | 14/14 (100 %, CI 78-100); includes thousands written with a space ("5 500"), which used to be misread as two numbers |
 
 **Real questions through `/api/chat` (`make eval-live`, 30 questions, 20 s apart)**
 

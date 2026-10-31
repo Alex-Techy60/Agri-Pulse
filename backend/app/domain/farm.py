@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.domain import Domain, Intent
 from app.domain.diagnosis import BRAND_PATTERN, RATE_PATTERN, VISION_PROMPT, parse_diagnosis
-from app.guardrails.validators import forbid_patterns, forbid_unless_negated, grounded_dates, grounded_numbers, max_words, numeric_limit
+from app.guardrails.validators import forbid_patterns, forbid_unless_negated, grounded_dates, grounded_numbers, grounded_units, max_words, numeric_limit
 from app.tools.crop_stage import crop_stage
 from app.tools.mandi import ALIASES, cross, mandi
 from app.tools.rain_history import rain_history
@@ -39,7 +39,7 @@ DOMAIN = Domain(
     intents=[
         Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Give the DECISION from CONTEXT first. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest. The best-paying market is the highest in the whole state, so never call it a market in the farmer's district unless CONTEXT says so. Never print rule labels written in CAPITAL_LETTERS_WITH_UNDERSCORES; say them in plain words.", ["sell", "hold", "wait", "store", "बेच", "भाव कब", "विक", "थांब", "साठव", "रुक", "bech", "ruk jaun", "ruk jau", "kab bech"]),
         Intent("market_price", "today's mandi / market price of a crop, price trend", "Give the latest price, the trend, and the highest nearby markets. Mention the unit (Rs per quintal) and the date.", ["price", "rate", "mandi", "bhav", "भाव", "दाम", "दर", "किंमत", "कीमत", "बाजार", "मंडी", "bhaav", "daam"]),
-        Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश", "पाऊस", "हवामान", "फवारणी", "छिड़क", "सिंचाई", "सिंचन", "तापमान", "baarish", "barish", "mausam", "dawai", "chhidk"]),
+        Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT. If CONTEXT has a WATER BALANCE line, say in plain words whether the coming rain covers the crop's water demand and by how many mm; it is a reference figure, not the exact need of the crop.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश", "पाऊस", "हवामान", "फवारणी", "छिड़क", "सिंचाई", "सिंचन", "तापमान", "baarish", "barish", "mausam", "dawai", "chhidk"]),
         Intent("sow_or_crop_care", "when to sow or harvest, soil moisture, crop care this week", "Use soil moisture and the 7-day rain outlook from CONTEXT; say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई", "पेरणी", "काढणी", "माती", "मिट्टी"]),
         Intent("crop_health", "plant disease, pest, yellow or spotted leaves, a photo of a sick crop", "Use the IMAGE ASSESSMENT in CONTEXT only. Describe the visible symptoms and possible causes in simple words, say it is a visual guess, and tell the farmer to show the plants to the local KVK or agriculture officer. No pesticide names, doses or rates.", ["disease", "pest", "leaf", "leaves", "yellow", "spot", "insect", "photo", "रोग", "कीट", "पत्ते", "पाने", "पान", "डाग", "धब्बे", "किडी", "फोटो", "bimari", "keeda", "daag", "patta", "patte"]),
         Intent("general", "greeting or anything else", "Answer briefly and invite a question about weather, prices or when to sell.", []),
@@ -62,6 +62,7 @@ DOMAIN = Domain(
     validators=[
         grounded_numbers(),  # every number in the answer must exist in tool output
         grounded_dates(),  # ...and so must every date
+        grounded_units(),  # ...and a Rs / % / mm figure must be that kind of figure in the data
         numeric_limit("pesticide dose", r"([\d.]+)\s*(?:ml|g)\s*(?:per|/)\s*(?:litre|liter|l)\b", hi=0.0, unit=" per litre"),  # no dose advice at all
         forbid_unless_negated({r"\b(guarantee[d]?|100\s*%\s*sure|definitely will|sure profit|risk[- ]free)\b": "Makes a guarantee. Rephrase as decision support."}),
         forbid_patterns({

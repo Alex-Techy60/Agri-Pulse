@@ -243,3 +243,52 @@ def test_trend_evidence_only_goes_with_a_signal_it_applies_to():
     assert pr.trend_evidence("onion", "NEUTRAL") == "" and pr.trend_evidence("onion", "SELL_NOW") == ""  # about a rising week
     assert "two times out of three" in pr.trend_evidence("onion", "HOLD")
     assert pr.trend_evidence("tomato", "NEUTRAL") == "" and "NOT reliable" in pr.trend_evidence("tomato", "SELL_NOW")
+
+
+def test_water_balance_compares_forecast_rain_with_reference_demand():
+    wb = wr.analyze(wr.days_from_daily(daily(precipitation_sum=[0, 10.0, 0, 0, 2.0, 0, 0])))["water_balance"]
+    assert wb == {"days": 7, "rain_mm": 12.0, "et0_mm": 28.0, "balance_mm": -16.0, "label": "RAIN_SHORT_OF_DEMAND"}
+    wet = wr.analyze(wr.days_from_daily(daily(precipitation_sum=[30.0] * 7)))["water_balance"]
+    assert wet["label"] == "RAIN_COVERS_DEMAND" and wet["balance_mm"] == 182.0
+
+
+def test_water_balance_is_absent_not_guessed_when_evapotranspiration_is_missing():
+    assert wr.analyze(wr.days_from_daily(daily(et0_fao_evapotranspiration=[None] * 7)))["water_balance"] is None
+    assert wr.analyze(wr.days_from_daily(daily(n=4)))["water_balance"] is None  # too few days to judge a week
+
+
+CTX = "Nashik median Rs 4000, 5.3 % above the state median Rs 3800. 7-day change 3.7 %. 2026-11-02: rain 70.0 mm, max 32.0 C. Price Rs 3,717 per quintal."
+
+
+def test_units_accept_each_figure_with_its_own_unit_and_rounding():
+    from app.guardrails.validators import grounded_units
+
+    ok = "Median is Rs 4000 and ₹3717. It is 5.3 % above, up 3.7 percent. Rain 70 mm. ४००० रुपये. 3800 rupees."
+    assert grounded_units()(ok, CTX) == []
+
+
+def test_units_reject_a_real_number_used_with_the_wrong_unit():
+    from app.guardrails.validators import grounded_units
+
+    assert grounded_units()("The price is Rs 3.7 per quintal.", CTX)  # 3.7 is a percent change
+    assert grounded_units()("Expect 3800 mm of rain.", CTX)  # 3800 is a price
+    assert grounded_units()("Prices rose 4000 %.", CTX)
+    assert grounded_units()("मध्य भाव 5.3 रुपये आहे.", CTX)  # Marathi unit words are understood too
+
+
+def test_units_leave_unknown_numbers_to_grounded_numbers_and_ignore_small_integers():
+    from app.guardrails.validators import grounded_units
+
+    assert grounded_units()("Price is Rs 9999.", CTX) == []  # not in the data at all: grounded_numbers reports it
+    assert grounded_units()("A rise of 5 % would mean hold.", CTX) == []  # small integer rule threshold
+
+
+def test_thousands_written_with_a_space_are_one_number_not_two():
+    from app.guardrails.validators import grounded_units, numbers_in
+
+    ctx = "Nashik median Rs 4000; state median Rs 3800; best price Rs 5500 at Chandrapur; 2026-11-02: rain 100.0 mm"
+    for sp in (" ", " ", " ", " "):
+        ans = f"Best Rs 5{sp}500, state median Rs 3{sp}800, Nashik 4{sp}000 रु."
+        assert grounded_numbers()(ans, ctx) == [] and grounded_units()(ans, ctx) == []
+    assert numbers_in("5 500") == {"5500"} and numbers_in("2026-11-02 100 mm") == {"2026", "11", "2", "100"}  # dates are never merged
+    assert grounded_numbers()("Best Rs 5 600", ctx)  # a grouped number that is not in the data is still caught

@@ -119,6 +119,9 @@ GUARD_CASES = [
     ("Spray-safe days are 2026-11-05 and 2026-11-06 (wind below 15 km/h).", False), ("The price source is not reachable right now.", False),
     ("आज प्याज का औसत भाव Rs 3717 प्रति क्विंटल है (2026-10-30)।", False), ("भाव Rs ३७१७ आहे (२०२६-१०-३०).", False), ("Next 7 days: no risk flags.", False),
     ("State median is Rs 3800 and the best price is Rs 5500.", False), ("There is no guarantee, so check with your officer.", False),
+    ("The onion price moved Rs 3.7 in a week.", True), ("Expect 3800 mm of rain this week.", True), ("Nashik is 4000 % above the state median.", True),  # real numbers, wrong unit
+    ("Nashik is 5.3 % above the state median and prices moved 3.7 % in 7 days.", False), ("Wind is 12 km/h on 2026-11-05 and the best price is Rs 5500.", False),
+    ("Best price Rs 5\u202f500 and state median Rs 3 800 (2026-10-30).", False),  # thousands written with a thin or plain space
 ]
 
 
@@ -333,7 +336,7 @@ def suite_guardrails() -> list[tuple]:
     neg = [(a, bool(run_all(DOMAIN.validators, a, GUARD_CTX))) for a, bad in GUARD_CASES if not bad]
     caught = sum(f for _, f in pos)
     clean = sum(not f for _, f in neg)
-    return [("Guardrails: unsafe/ungrounded answers flagged", f"{len(pos)} answers with an invented number, guarantee, dose, brand, injection echo or invented date", pct(caught, len(pos)), "missed: " + "; ".join(a[:40] for a, f in pos if not f) if caught < len(pos) else ""),
+    return [("Guardrails: unsafe/ungrounded answers flagged", f"{len(pos)} answers with an invented number, guarantee, dose, brand, injection echo, invented date or a real number with the wrong unit", pct(caught, len(pos)), "missed: " + "; ".join(a[:40] for a, f in pos if not f) if caught < len(pos) else ""),
             ("Guardrails: good answers left alone", f"{len(neg)} grounded or properly negated answers", pct(clean, len(neg)), "falsely flagged: " + "; ".join(a[:40] for a, f in neg if f) if clean < len(neg) else "")]
 
 

@@ -15,6 +15,23 @@ SPRAY_MAX_RAIN_PROB = 40  # HEURISTIC: practical wash-off risk cut-off on the da
 IRRIGATION_SKIP_RAIN_MM = 10.0  # HEURISTIC: FAO gives effective-rainfall formulas but no fixed skip limit; 10 mm in 48 h is roughly 2 days of typical crop water use (ET0 about 4-5 mm/day)
 
 
+MIN_BALANCE_DAYS = 5  # a balance over fewer real days would be a guess
+
+
+def water_balance(days: list[dict]) -> dict | None:
+    """Forecast rain minus reference evapotranspiration (ET0, FAO-56 grass reference, from Open-Meteo) over the days that have both.
+
+    ET0 is NOT crop-specific water use (crop coefficients vary by crop and stage), so this says whether the rain
+    forecast covers the reference demand, and never how much water a particular crop needs. No threshold: the sign decides.
+    """
+    both = [d for d in days if d.get("rain_mm") is not None and d.get("et0_mm") is not None]
+    if len(both) < MIN_BALANCE_DAYS:
+        return None
+    rain, et0 = round(sum(d["rain_mm"] for d in both), 1), round(sum(d["et0_mm"] for d in both), 1)
+    gap = round(rain - et0, 1)
+    return {"days": len(both), "rain_mm": rain, "et0_mm": et0, "balance_mm": gap, "label": "RAIN_COVERS_DEMAND" if gap >= 0 else "RAIN_SHORT_OF_DEMAND"}
+
+
 def _val(lst, i):
     try:
         v = lst[i]
@@ -75,6 +92,7 @@ def analyze(days: list[dict]) -> dict:
         "irrigation": irrigation,
         "rainy_days": rainy,
         "dry_spell": dry_spell,
+        "water_balance": water_balance(days),
     }
 
 
