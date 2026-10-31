@@ -110,3 +110,34 @@ def test_empty_input_and_documents_used():
     assert "type or speak" in run(["good"], FakeLLM(), text="   ").answer
     r = run([], FakeLLM(["Fine, 33 C."]), hits=[hit("Spray in the evening.", "icar.md")])
     assert r.sources == ["icar.md"]
+
+
+def test_complete_inputs_tell_the_model_not_to_ask_again():
+    llm = FakeLLM(["Rain 70.2 mm expected."])
+    run(["good"], llm)
+    assert "INPUTS COMPLETE" in llm.last_messages[0]["content"]
+    llm = FakeLLM(["Which place?"])
+    run(["needs"], llm)
+    assert "INPUTS COMPLETE" not in llm.last_messages[0]["content"]
+
+
+def test_safe_fallback_uses_the_farmers_language():
+    d = domain(["good"])
+    d.safe_fallback_by_lang, d.languages = {"mr": "SAFE-MR"}, {"en": "English", "mr": "Marathi"}
+    r = Orchestrator(d, FakeLLM(["Rain will be 85 mm."]), StubStore()).run("will it rain?", language="mr", profile={"place": "Nashik"})
+    assert r.answer == "SAFE-MR"
+    r = Orchestrator(d, FakeLLM(["Rain will be 85 mm."]), StubStore()).run("will it rain?", language="en", profile={"place": "Nashik"})
+    assert r.answer == "SAFE"
+
+
+def test_offline_answer_hides_exception_text_and_urls_from_the_farmer():
+    llm = FakeLLM(off=True)
+    r = run(["good", "down"], llm)
+    assert "WEATHER for Nashik" in r.answer  # the real data stays
+    assert "Do NOT guess" not in r.answer and "SOURCE UNAVAILABLE" not in r.answer
+    assert "not reachable right now" in r.answer
+
+
+def test_every_supported_language_has_a_native_safe_fallback():
+    from app.domain.farm import DOMAIN
+    assert set(DOMAIN.languages) - {"en"} == set(DOMAIN.safe_fallback_by_lang)

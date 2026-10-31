@@ -412,3 +412,42 @@ def test_signal_text_carries_the_per_crop_evidence_and_the_decision_explains_its
     assert "not a forecast" in r.text and "two times out of three" in r.text
     d = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
     assert "DECISION (computed in code): HOLD (prices rising, 25.0 % in 7 days; a recent trend, not a forecast)" in d.text
+
+
+def test_a_devanagari_place_is_searched_in_its_language_and_returned_with_english_names():
+    import app.tools.location as loc_mod
+
+    asked = []
+
+    def routes(url, p):
+        asked.append((url.rsplit("/", 1)[-1], p.get("language")))
+        if url.endswith("/search"):  # like the live geocoder: native script only matches when language=mr
+            return {"results": [{"id": 7, "name": "नाशिक", "latitude": 20.0, "longitude": 73.8, "admin1": "महाराष्ट्र", "admin2": "नाशिक", "population": 1486053}]} if p["language"] == "mr" else {}
+        return {"id": 7, "name": "Nashik", "latitude": 20.0, "longitude": 73.8, "admin1": "Maharashtra", "admin2": "Nashik"}
+
+    install(routes)
+    for typed in ("नाशिक", "नाशिक, महाराष्ट्र"):
+        loc = loc_mod.resolve_location({"place": typed})
+        assert (loc["name"], loc["state"], loc["district"]) == ("Nashik", "Maharashtra", "Nashik")
+    assert ("search", "mr") in asked and ("get", "en") in asked
+
+
+def test_a_devanagari_place_the_geocoder_does_not_know_is_reported_not_guessed():
+    import app.tools.location as loc_mod
+
+    install(lambda url, p: {})
+    try:
+        loc_mod.resolve_location({"place": "लासलगाव"})
+    except PlaceNotFound:
+        return
+    raise AssertionError("expected PlaceNotFound")
+
+
+def test_crop_names_in_hindi_and_marathi_map_to_the_agmarknet_commodity():
+    from app.tools.mandi import ALIASES, commodity_name
+
+    assert commodity_name({"crop": "कांदा"}, "") == "Onion"
+    assert commodity_name({"crop": "प्याज"}, "") == "Onion"
+    assert commodity_name({}, "मी माझा टोमॅटो विकू का?") == "Tomato"
+    assert commodity_name({"crop": "Onion"}, "") == "Onion"
+    assert not any(ord(ch) > 127 for k in ALIASES for ch in k)  # the UI dropdown is built from ALIASES: stays English

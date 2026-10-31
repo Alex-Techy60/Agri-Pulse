@@ -149,12 +149,18 @@ def grounded_dates() -> Validator:
 
 _MD_LINE_START = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*\u2022][ \t]+)", re.MULTILINE)
 _MD_INLINE = re.compile(r"\*\*|__|`")
+_LABEL = re.compile(r"\b[A-Z]{2,}(?:_[A-Z]{2,})+\b")  # internal rule labels such as ABOVE_STATE_MEDIAN
+
+
+def _humanize(m: re.Match) -> str:
+    return m.group(0).replace("_", " ") if m.group(0) == "SELL_NOW" else m.group(0).replace("_", " ").lower()
 
 
 def plain_text(text: str) -> str:
     """Strip markdown symbols (the reply may be read aloud, and the prompt alone cannot guarantee it). Touches symbols
-    only: hyphens inside dates and ranges, and every number, stay exactly as they were."""
-    return _MD_INLINE.sub("", _MD_LINE_START.sub("", text or "")).strip()
+    only: hyphens inside dates and ranges, and every number, stay exactly as they were. Internal rule labels are
+    written as plain words, since the farmer should never see ABOVE_STATE_MEDIAN."""
+    return _LABEL.sub(_humanize, _MD_INLINE.sub("", _MD_LINE_START.sub("", text or ""))).strip()
 
 
 def run_all(validators: list[Validator], text: str, context: str = "") -> list[str]:

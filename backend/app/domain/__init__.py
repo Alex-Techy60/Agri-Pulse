@@ -42,6 +42,7 @@ class Domain:
     vision_parser: Callable[[str], dict | None] | None = None  # vision text -> {summary, card} or None
     tool_help: dict[str, str] = field(default_factory=dict)  # one line per tool, shown to the planner
     profile_fields: list[dict] = field(default_factory=list)  # UI profile form: {key,label,placeholder,options?}
+    safe_fallback_by_lang: dict[str, str] = field(default_factory=dict)  # same text as safe_fallback, in the farmer's language
 
 
 def load_domain() -> Domain:

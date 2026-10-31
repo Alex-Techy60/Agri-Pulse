@@ -6,11 +6,21 @@ import { Cards, Sources } from "./components/Cards.jsx";
 const SESSION = crypto.randomUUID?.() ?? String(Date.now());
 const loadProfile = () => { try { return JSON.parse(localStorage.getItem("profile") || "{}"); } catch { return {}; } };
 const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringify(p)); } catch { /* private mode */ } };
+const loadLang = () => { try { return localStorage.getItem("lang") || "en"; } catch { return "en"; } };
+const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* private mode */ } };
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // the API caps image_b64 at about 5 MB
+const PHOTO_PROMPT = "Please check this crop photo.";
+const readB64 = (file) => new Promise((ok, bad) => {
+  const fr = new FileReader();
+  fr.onload = () => ok(String(fr.result).split(",")[1]); // the API wants raw base64, no data: prefix
+  fr.onerror = bad;
+  fr.readAsDataURL(file);
+});
 
 export default function App() {
   const [domain, setDomain] = useState(null);
   const [health, setHealth] = useState(null);
-  const [lang, setLang] = useState("en");
+  const [lang, setLang] = useState(loadLang);
   const [msgs, setMsgs] = useState([]);
   const [trace, setTrace] = useState([]);
   const [input, setInput] = useState("");
@@ -18,6 +28,7 @@ export default function App() {
   const [rec, setRec] = useState(false);
   const [speak, setSpeak] = useState(false);
   const [profile, setProfile] = useState(loadProfile);
+  const [photo, setPhoto] = useState(null);
   const recorder = useRef(null);
   const endRef = useRef(null);
 
@@ -28,14 +39,17 @@ export default function App() {
   useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [msgs, trace]);
 
   async function send(text) {
-    text = (text ?? input).trim();
+    text = (text ?? input).trim() || (photo ? PHOTO_PROMPT : "");
     if (!text || busy) return;
+    const image = photo;
     setInput("");
+    setPhoto(null);
     setBusy(true);
     setTrace([]);
-    setMsgs((m) => [...m, { role: "user", text }]);
+    setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text }]);
     try {
-      const r = await chatStream({ message: text, sessionId: SESSION, language: lang, profile: { place: profile.place, crop: profile.crop } }, (s) => setTrace((t) => [...t, s]));
+      const imageB64 = image ? await readB64(image) : undefined;
+      const r = await chatStream({ message: text, sessionId: SESSION, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop } }, (s) => setTrace((t) => [...t, s]));
       setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r }]);
       if (r.profile?.place) { const np = { ...profile, place: profile.place || r.profile.place }; setProfile(np); saveProfile(np); }
       if (speak && "speechSynthesis" in window) {
@@ -44,10 +58,19 @@ export default function App() {
         speechSynthesis.speak(u);
       }
     } catch (e) {
-      setMsgs((m) => [...m, { role: "bot", text: "Something went wrong reaching the server. Please try again.", meta: { degraded: true } }]);
+      const text = e.retryAfter ? `Too many questions right now. Please wait ${e.retryAfter} seconds and try again.` : "Something went wrong reaching the server. Please try again.";
+      setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
     } finally {
       setBusy(false);
     }
+  }
+
+  function pickPhoto(e) {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // lets the same file be picked again
+    if (!f) return;
+    if (f.size > MAX_PHOTO_BYTES) return alert("Photo is too large. Please use one under 5 MB.");
+    setPhoto(f);
   }
 
   async function toggleMic() {
@@ -80,7 +103,7 @@ export default function App() {
           <p>{domain.tagline}</p>
         </div>
         <div className="controls">
-          <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Language">
+          <select value={lang} onChange={(e) => { setLang(e.target.value); saveLang(e.target.value); }} aria-label="Language">
             {Object.entries(domain.languages).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
@@ -135,8 +158,11 @@ export default function App() {
 
       <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <button type="button" className={rec ? "mic on" : "mic"} onClick={toggleMic} aria-label="Voice input">{rec ? "■" : "🎤"}</button>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask anything…" disabled={busy} />
-        <button type="submit" disabled={busy || !input.trim()}>Send</button>
+        <label className={photo ? "mic photo on" : "mic photo"} title={photo ? photo.name : "Add a crop photo"}>
+          📷<input type="file" accept="image/*" onChange={pickPhoto} disabled={busy} aria-label="Add a crop photo" />
+        </label>
+        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={photo ? `Photo ready: ${photo.name}` : "Ask anything…"} disabled={busy} />
+        <button type="submit" disabled={busy || (!input.trim() && !photo)}>Send</button>
       </form>
     </div>
   );

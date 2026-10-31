@@ -49,7 +49,7 @@ function Prices({ c }) {
   return (
     <div className="card">
       <h3>{c.title}</h3>
-      {sig && <span className={`sig ${sig}`}>{sig.replace("_", " ")}{c.signal.pct_vs_baseline != null ? ` · ${c.signal.pct_vs_baseline}% vs recent avg` : ""}</span>}
+      {sig && <span className={`sig ${sig}`}>{sig.replace("_", " ")}{c.signal.change_pct != null ? ` · ${c.signal.change_pct}% in ${c.signal.window_days} days, same ${c.signal.markets_compared} markets` : ""}</span>}
       {pts.length > 1 && (
         <svg viewBox={`0 0 ${W} ${H}`} className="spark" role="img" aria-label="price trend">
           <polyline fill="none" stroke="currentColor" strokeWidth="2" points={xy.map((p) => p.join(",")).join(" ")} />
@@ -60,11 +60,56 @@ function Prices({ c }) {
       {c.markets?.length > 0 && (
         <table><tbody>{c.markets.map((m, i) => <tr key={i}><td>{m.market}</td><td>{m.district}</td><td>₹{m.modal}</td></tr>)}</tbody></table>
       )}
+      {c.position && (
+        <small className="position">
+          State median ₹{c.position.state_median} across {c.position.markets} markets · best ₹{c.position.best_price} at {c.position.best_market}
+          {c.position.local_median != null ? ` · your district ₹${c.position.local_median} (${c.position.pct_vs_state_median}% vs state)` : ""}
+        </small>
+      )}
     </div>
   );
 }
 
+const ALERTS = { DRY_SPELL_ALERT: "Dry spell", IRRIGATION_URGENT: "Irrigation urgent", WATERLOGGING_RISK: "Waterlogging risk" };
+
+function RainHistory({ c }) {
+  const pts = c.daily || [];
+  const hi = Math.max(1, ...pts.map((p) => p.rain_mm ?? 0));
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <div className="card">
+      <h3>{c.title}</h3>
+      <div className="rainstats">
+        <div><b>{c.past_7d_mm} mm</b><span>last 7 days</span></div>
+        <div><b>{c.past_30d_mm} mm</b><span>last 30 days</span></div>
+        <div><b>{c.forecast_7d_mm} mm</b><span>next 7 days</span></div>
+      </div>
+      {pts.length > 0 && (
+        <div className="rainbars" role="img" aria-label="daily rain, last 30 days then next 7">
+          {pts.map((p) => <i key={p.date} className={p.date >= today ? "next" : ""} style={{ height: `${Math.max(2, ((p.rain_mm ?? 0) / hi) * 100)}%` }} title={`${p.date}: ${p.rain_mm ?? "no data"} mm`} />)}
+        </div>
+      )}
+      {c.alerts?.length > 0 && <div className="flags">{c.alerts.map((a) => <span key={a} className="flag">{ALERTS[a] || a}</span>)}</div>}
+    </div>
+  );
+}
+
+function Diagnosis({ c }) {
+  return (
+    <div className="card">
+      <h3>{c.title}</h3>
+      <span className={`sev ${c.severity}`}>Severity: {c.severity}</span>
+      {c.symptoms?.length > 0 && <><h4>Symptoms seen</h4><ul>{c.symptoms.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      {c.possible_causes?.length > 0 && <><h4>Possible causes</h4><ul>{c.possible_causes.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      {c.recommendations?.length > 0 && <><h4>Next steps</h4><ul>{c.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      <small>{c.disclaimer}</small>
+    </div>
+  );
+}
+
+const CARD_TYPES = { forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+
 export function Cards({ cards }) {
   if (!cards?.length) return null;
-  return <div className="cards">{cards.map((c, i) => (c.type === "forecast" ? <Forecast key={i} c={c} /> : c.type === "prices" ? <Prices key={i} c={c} /> : null))}</div>;
+  return <div className="cards">{cards.map((c, i) => { const Card = CARD_TYPES[c.type]; return Card ? <Card key={i} c={c} /> : null; })}</div>;
 }

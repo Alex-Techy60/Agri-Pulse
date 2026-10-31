@@ -36,7 +36,7 @@ DOMAIN = Domain(
     tagline="Live weather, soil and mandi prices -> clear advice in your language.",
     persona=PERSONA,
     intents=[
-        Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Give the DECISION from CONTEXT first. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest.", ["sell", "hold", "wait", "store", "बेच", "भाव कब"]),
+        Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Give the DECISION from CONTEXT first. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest. The best-paying market is the highest in the whole state, so never call it a market in the farmer's district unless CONTEXT says so. Never print rule labels written in CAPITAL_LETTERS_WITH_UNDERSCORES; say them in plain words.", ["sell", "hold", "wait", "store", "बेच", "भाव कब"]),
         Intent("market_price", "today's mandi / market price of a crop, price trend", "Give the latest price, the trend, and the highest nearby markets. Mention the unit (Rs per quintal) and the date.", ["price", "rate", "mandi", "bhav", "भाव", "दाम"]),
         Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश"]),
         Intent("sow_or_crop_care", "when to sow or harvest, soil moisture, crop care this week", "Use soil moisture and the 7-day rain outlook from CONTEXT; say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई"]),
@@ -76,6 +76,17 @@ DOMAIN = Domain(
         "I cannot give a reliable answer right now. Please check with your local Krishi Vigyan Kendra (KVK) "
         "or agriculture officer, and try me again in a few minutes."
     ),
+    safe_fallback_by_lang={
+        "hi": "अभी मैं भरोसेमंद जवाब नहीं दे पा रहा हूँ। कृपया अपने नज़दीकी कृषि विज्ञान केंद्र (KVK) या कृषि अधिकारी से पूछें, और कुछ मिनट बाद फिर कोशिश करें।",
+        "mr": "सध्या मी खात्रीशीर उत्तर देऊ शकत नाही. कृपया जवळच्या कृषी विज्ञान केंद्र (KVK) किंवा कृषी अधिकाऱ्याला विचारा, आणि काही मिनिटांनी पुन्हा प्रयत्न करा.",
+        "gu": "હાલમાં હું વિશ્વસનીય જવાબ આપી શકતો નથી. કૃપા કરીને તમારા નજીકના કૃષિ વિજ્ઞાન કેન્દ્ર (KVK) અથવા કૃષિ અધિકારીને પૂછો, અને થોડી મિનિટ પછી ફરી પ્રયાસ કરો.",
+        "pa": "ਇਸ ਵੇਲੇ ਮੈਂ ਭਰੋਸੇਯੋਗ ਜਵਾਬ ਨਹੀਂ ਦੇ ਸਕਦਾ। ਕਿਰਪਾ ਕਰਕੇ ਆਪਣੇ ਨੇੜਲੇ ਕ੍ਰਿਸ਼ੀ ਵਿਗਿਆਨ ਕੇਂਦਰ (KVK) ਜਾਂ ਖੇਤੀਬਾੜੀ ਅਫ਼ਸਰ ਤੋਂ ਪੁੱਛੋ, ਅਤੇ ਕੁਝ ਮਿੰਟਾਂ ਬਾਅਦ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।",
+        "ta": "இப்போது என்னால் நம்பகமான பதிலை அளிக்க முடியவில்லை. உங்கள் அருகிலுள்ள வேளாண் அறிவியல் மையம் (KVK) அல்லது வேளாண்மை அலுவலரிடம் கேளுங்கள், சில நிமிடங்கள் கழித்து மீண்டும் முயற்சி செய்யுங்கள்.",
+        "te": "ప్రస్తుతం నేను నమ్మదగిన సమాధానం ఇవ్వలేకపోతున్నాను. దయచేసి మీ దగ్గరలోని కృషి విజ్ఞాన కేంద్రం (KVK) లేదా వ్యవసాయ అధికారిని అడగండి, కొన్ని నిమిషాల తర్వాత మళ్లీ ప్రయత్నించండి.",
+        "kn": "ಈಗ ನಾನು ವಿಶ್ವಾಸಾರ್ಹ ಉತ್ತರ ನೀಡಲು ಸಾಧ್ಯವಾಗುತ್ತಿಲ್ಲ. ದಯವಿಟ್ಟು ಹತ್ತಿರದ ಕೃಷಿ ವಿಜ್ಞಾನ ಕೇಂದ್ರ (KVK) ಅಥವಾ ಕೃಷಿ ಅಧಿಕಾರಿಯನ್ನು ಕೇಳಿ, ಕೆಲವು ನಿಮಿಷಗಳ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+        "bn": "এই মুহূর্তে আমি নির্ভরযোগ্য উত্তর দিতে পারছি না। অনুগ্রহ করে আপনার কাছের কৃষি বিজ্ঞান কেন্দ্র (KVK) বা কৃষি কর্মকর্তাকে জিজ্ঞাসা করুন, এবং কয়েক মিনিট পরে আবার চেষ্টা করুন।",
+        "ml": "ഇപ്പോൾ എനിക്ക് വിശ്വസനീയമായ മറുപടി നൽകാൻ കഴിയുന്നില്ല. ദയവായി നിങ്ങളുടെ അടുത്തുള്ള കൃഷി വിജ്ഞാന കേന്ദ്രത്തോട് (KVK) അല്ലെങ്കിൽ കൃഷി ഓഫീസറോട് ചോദിക്കുക, ഏതാനും മിനിറ്റുകൾക്കു ശേഷം വീണ്ടും ശ്രമിക്കുക.",
+    },
     suggested_prompts=[
         "Should I sell my crop now or wait?",
         "Is it safe to spray in the next few days?",

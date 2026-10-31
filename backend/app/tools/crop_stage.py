@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from app.decision.crop_rules import crop_advice, has_rules
 from app.tools import PlaceNotFound, SourceUnavailable, ToolResult, guarded
+from app.tools.mandi import crop_key
 from app.tools.weather import get_weather
 
 
 def get_crop_stage(profile: dict) -> ToolResult:
-    crop = (profile.get("crop") or "").strip()
+    crop = crop_key(profile.get("crop") or "")
     if not crop:
         return ToolResult("CROP RULES: no crop selected, so no crop-specific rules were checked.")
     try:

@@ -22,7 +22,7 @@ main { flex:1; min-height:0; display:grid; grid-template-columns:1fr 320px; gap:
 .suggest button { text-align:left; background:transparent; color:var(--text); border:1px dashed var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; font:inherit; }
 .suggest button:hover { border-color:var(--accent); }
 .composer { display:flex; gap:8px; padding:0 0 16px; }
-.composer input { flex:1; }
+.composer input { flex:1; min-width:0; } /* min-width:0 lets the text box shrink so Send is never pushed off a narrow screen */
 button { background:var(--accent); color:#111; border:0; border-radius:8px; padding:8px 16px; font:inherit; font-weight:600; cursor:pointer; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 .mic { background:var(--panel); color:var(--text); border:1px solid var(--line); } .mic.on { background:var(--bad); color:#fff; }
@@ -30,7 +30,12 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .trace li.bad b { color:var(--bad); } .trace b { color:var(--accent); } .trace span { color:var(--text); }
 .trace em { float:right; color:var(--muted); font-style:normal; } .detail { color:var(--muted); font-size:12px; margin-top:2px; word-break:break-word; }
 .muted { color:var(--muted); font-size:13px; }
-@media (max-width: 800px) { main { grid-template-columns:1fr; } aside { max-height:30vh; } }
+@media (max-width: 800px) {
+  .app { height:auto; min-height:100vh; } /* the page scrolls; two nested scroll areas leave the chat a sliver on a phone */
+  main { grid-template-columns:1fr; }
+  .chat { overflow:visible; min-height:50vh; } aside { max-height:none; overflow:visible; }
+  .composer { position:sticky; bottom:0; background:var(--bg); padding:8px 0 12px; }
+}
 .profile { display:flex; gap:12px; flex-wrap:wrap; padding:12px 0 0; }
 .profile label { display:flex; flex-direction:column; gap:3px; flex:1; min-width:200px; font-size:12px; color:var(--muted); }
 .profile input { width:100%; }
@@ -47,5 +52,16 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .sig.NEUTRAL, .sig.INSUFFICIENT_DATA { background:#1d2b3a; color:var(--muted); }
 .spark { width:100%; max-width:300px; height:60px; color:var(--accent); display:block; } .spark circle { fill:currentColor; }
 .card table { width:100%; margin-top:6px; font-size:12px; border-collapse:collapse; } .card td { padding:3px 4px; border-top:1px solid var(--line); }
+.photo { display:flex; align-items:center; border-radius:8px; padding:8px 12px; cursor:pointer; } .photo input { display:none; }
+.position { display:block; margin-top:6px; }
+.rainstats { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; text-align:center; }
+.rainstats div { background:#16212c; border-radius:8px; padding:6px 4px; display:flex; flex-direction:column; }
+.rainstats b { color:#7cc4ff; font-size:14px; } .rainstats span { color:var(--muted); font-size:11px; }
+.rainbars { display:flex; align-items:flex-end; gap:1px; height:48px; margin-top:8px; }
+.rainbars i { flex:1; min-width:0; background:#3f6f9a; border-radius:1px 1px 0 0; } .rainbars i.next { background:var(--accent); }
+.sev { display:inline-block; font-size:12px; font-weight:700; padding:2px 10px; border-radius:99px; background:#1d2b3a; color:var(--muted); }
+.sev.mild { background:#12331f; color:var(--ok); } .sev.moderate { background:#3a2a10; color:var(--accent); } .sev.severe { background:#3a1b1b; color:var(--bad); }
+.card h4 { margin:8px 0 2px; font-size:12px; color:var(--muted); font-weight:600; }
+.card ul { margin:0; padding-left:18px; font-size:13px; }
 .live a { color:#7cc4ff; } .live .stale { color:var(--accent); }
 @media (max-width: 800px) { .days { grid-template-columns:repeat(4,1fr); } }

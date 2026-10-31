@@ -12,6 +12,7 @@ Nothing here raises to the caller.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import OrderedDict, defaultdict, deque
@@ -265,6 +266,8 @@ class Orchestrator:
             yield step("Guardrail", "injection attempt flagged", "instruction-override pattern in user message; rules unchanged", None, ok=False)
         if resolved.get("crop"):
             context += f"\nFARMER PROFILE: crop {resolved['crop']}"
+        if names and not missing:  # an earlier "which place?" turn stays in history and the model repeats it
+            context += "\nINPUTS COMPLETE: place and crop are known. Do NOT ask the farmer for them again."
         memory_ctx = "\n".join(h.text for h in mem)
 
         # 5) Specialist + guardrail loop -----------------------------------------
@@ -293,7 +296,7 @@ class Orchestrator:
                 {"role": "user", "content": "Your answer violated these rules:\n- " + "\n- ".join(violations) + "\nRewrite it fixing every violation. Same language, same format."},
             ]
         else:
-            answer = self.domain.safe_fallback
+            answer = self.domain.safe_fallback_by_lang.get(lang, self.domain.safe_fallback)
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
 
         answer = plain_text(answer)
@@ -358,12 +361,27 @@ class Orchestrator:
         """LLM unreachable: show the REAL live data we already fetched (no AI summary), or ask for missing input."""
         if missing and not any(t for t in tool_ctx if not t.startswith(("MISSING", "TOOL FAILED"))):
             return "To help you I need: " + "; ".join(missing.values()) + "."
-        data = [t for t in tool_ctx if not t.startswith(("MISSING", "TOOL FAILED"))]
+        data = [_plain_failure(t) for t in tool_ctx if not t.startswith(("MISSING", "TOOL FAILED"))]
         if data:
             return "(AI summary unavailable - showing live data only)\n\n" + "\n\n".join(data)[:1800]
         if kb:
             return "(AI offline) Most relevant document text:\n" + kb[0].text[:400]
         return "I'm offline right now and have no live data for that. Please try again shortly."
+
+
+_FAILURE = re.compile(r"^(\w+?) (?:SOURCE UNAVAILABLE|FAILED: place not found)")
+
+
+def _plain_failure(text: str) -> str:
+    """Tool failure text carries the exception and request URL for the LLM and the logs; a farmer reading the offline
+    answer gets one plain sentence instead."""
+    m = _FAILURE.match(text)
+    if not m:
+        return text
+    what = m.group(1).replace("_", " ").lower()
+    if "place not found" in text[: m.end()]:
+        return f"The place name could not be matched, so no {what} data is shown. Please give the nearest bigger town or the district name."
+    return f"{what.capitalize()}: this live source is not reachable right now, so nothing is shown instead of a guess."
 
 
 _orch: Orchestrator | None = None

@@ -44,6 +44,30 @@ ALIASES = {
 }
 
 
+# Hindi/Marathi crop names -> the English key above. Farmers type their crop in their own script; without this the
+# Devanagari word would be sent to Agmarknet as a commodity and match nothing. Kept apart from ALIASES: the UI dropdown
+# is built from ALIASES and must stay English.
+NATIVE_CROPS = {
+    "कांदा": "onion", "कांदे": "onion", "प्याज": "onion", "प्याज़": "onion", "टोमॅटो": "tomato", "टमाटर": "tomato",
+    "बटाटा": "potato", "आलू": "potato", "गहू": "wheat", "गेहूं": "wheat", "गेहूँ": "wheat", "मका": "maize", "मक्का": "maize",
+    "तांदूळ": "rice", "चावल": "rice", "धान": "paddy", "भात": "paddy", "सोयाबीन": "soybean", "कापूस": "cotton", "कपास": "cotton",
+    "भुईमूग": "groundnut", "मूंगफली": "groundnut", "हरभरा": "gram", "चना": "chana", "केळी": "banana", "केला": "banana",
+    "मोहरी": "mustard", "सरसों": "mustard", "बाजरी": "bajra", "बाजरा": "bajra", "ज्वारी": "jowar", "ज्वार": "jowar",
+    "कोबी": "cabbage", "पत्तागोभी": "cabbage", "फुलकोबी": "cauliflower", "वांगी": "brinjal", "बैंगन": "brinjal",
+    "लसूण": "garlic", "लहसुन": "garlic", "हळद": "turmeric", "हल्दी": "turmeric", "मिरची": "chilli", "मिर्च": "chilli",
+    "कोथिंबीर": "coriander", "धनिया": "coriander", "मूग": "moong", "उडीद": "urad", "उड़द": "urad", "तूर": "tur", "अरहर": "arhar",
+    "सफरचंद": "apple", "सेब": "apple", "आंबा": "mango", "आम": "mango", "लिंबू": "lemon", "नींबू": "lemon",
+    "आले": "ginger", "अदरक": "ginger", "डाळिंब": "pomegranate", "अनार": "pomegranate", "द्राक्षे": "grapes", "अंगूर": "grapes",
+}
+_DEVANAGARI = "\u0900-\u097f"
+
+
+def crop_key(crop: str) -> str:
+    """Lower-case English key for a typed crop: 'कांदा' -> 'onion'; anything unknown is returned lower-cased as typed."""
+    c = (crop or "").strip().lower()
+    return NATIVE_CROPS.get(c, c)
+
+
 # Geocoder state name (lower-case) -> the spelling used in the data.gov.in dataset. Checked against the real file of
 # 30 Oct 2026 and live geocoder output. Names the dataset does not contain today (Jharkhand, Sikkim, Mizoram, Arunachal,
 # Ladakh) are left alone and honestly return "no records".
@@ -59,13 +83,15 @@ def agmarknet_state(name: str) -> str:
 
 
 def commodity_name(profile: dict, text: str) -> str:
-    crop = (profile.get("crop") or "").strip()
+    crop = crop_key(profile.get("crop") or "")
     if not crop:
         low = (text or "").lower()
         crop = next((k for k in ALIASES if re.search(rf"(?<![a-z]){re.escape(k)}(?![a-z])", low)), "")  # whole words only
     if not crop:
+        crop = next((v for k, v in NATIVE_CROPS.items() if re.search(rf"(?<![{_DEVANAGARI}]){re.escape(k)}(?![{_DEVANAGARI}])", text or "")), "")
+    if not crop:
         raise NeedsInput("crop", "which crop the farmer grows or wants to sell")
-    return ALIASES.get(crop.lower(), crop.title())
+    return ALIASES.get(crop, crop.title())
 
 
 def _norm(rec: dict) -> dict:
@@ -182,7 +208,7 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         lines.append(
             f"SIGNAL (computed in code): {sig['signal']} - {word}: the same {sig['markets_compared']} markets moved {sig['change_pct']} % between {sig['compared_with']} and {sig['latest_date']} "
             f"({sig['window_days']} days). Rule: a rise of {TREND_BAND_PCT:g} % or more = HOLD, a fall of {TREND_BAND_PCT:g} % or more = SELL_NOW, otherwise NEUTRAL. "
-            f"This is a recent trend, not a forecast. {trend_evidence(commodity)} Say both in one or two short sentences."
+            f"This is a recent trend, not a forecast. {trend_evidence(commodity, sig['signal'])} Say that in one or two short sentences."
         )
     else:
         lines.append(f"SIGNAL: INSUFFICIENT_DATA (no comparable day about a week earlier with at least {MIN_SHARED_MARKETS} markets in common). Say plainly that a price trend is not available and report today's prices and the market position only.")

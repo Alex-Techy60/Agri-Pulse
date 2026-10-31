@@ -64,7 +64,7 @@ def test_everything_down_still_answers_with_degraded_and_no_crash(monkeypatch):
 
     use(handler)
     r = Orchestrator(DOMAIN, FakeLLM(off=True), StubStore()).run("Should I sell my onions?", profile={"place": "Nashik", "crop": "Onion"})
-    assert r.answer and r.degraded and "SOURCE UNAVAILABLE" in r.answer
+    assert r.answer and r.degraded and "not reachable right now" in r.answer and "wifi off" not in r.answer
     assert any(t.action == "replan" for t in r.trace)
 
 

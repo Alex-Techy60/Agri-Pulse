@@ -232,3 +232,14 @@ def test_trend_evidence_is_per_crop_and_says_when_a_crop_was_not_tested():
     assert "barely moved" in pr.trend_evidence(" Potato ")
     for crop in ("Wheat", "", None):
         assert pr.trend_evidence(crop) == pr.TREND_UNTESTED and "not been checked" in pr.trend_evidence(crop)
+
+
+def test_plain_text_writes_internal_labels_as_words_but_keeps_the_decision():
+    from app.guardrails.validators import plain_text
+    assert plain_text("Price is ABOVE_STATE_MEDIAN. Signal: SELL_NOW. NEUTRAL, HOLD.") == "Price is above state median. Signal: SELL NOW. NEUTRAL, HOLD."
+
+
+def test_trend_evidence_only_goes_with_a_signal_it_applies_to():
+    assert pr.trend_evidence("onion", "NEUTRAL") == "" and pr.trend_evidence("onion", "SELL_NOW") == ""  # about a rising week
+    assert "two times out of three" in pr.trend_evidence("onion", "HOLD")
+    assert pr.trend_evidence("tomato", "NEUTRAL") == "" and "NOT reliable" in pr.trend_evidence("tomato", "SELL_NOW")

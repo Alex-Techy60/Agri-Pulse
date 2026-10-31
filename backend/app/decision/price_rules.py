@@ -85,8 +85,13 @@ TREND_EVIDENCE = {
 TREND_UNTESTED = "This trend rule has not been checked for this crop, so treat it as a weak hint."
 
 
-def trend_evidence(commodity: str) -> str:
-    return TREND_EVIDENCE.get(str(commodity or "").strip().lower(), TREND_UNTESTED)
+def trend_evidence(commodity: str, signal: str | None = None) -> str:
+    """The backtest sentence for this crop. Given the live signal it is only returned where it applies: the onion result
+    is about a RISING week, so it goes with HOLD alone; with NEUTRAL there is no trend claim to qualify."""
+    text = TREND_EVIDENCE.get(str(commodity or "").strip().lower(), TREND_UNTESTED)
+    if signal == "NEUTRAL" or (signal == "SELL_NOW" and text is TREND_EVIDENCE["onion"]):
+        return ""
+    return text
 
 
 def _median(xs: list[float]) -> float:

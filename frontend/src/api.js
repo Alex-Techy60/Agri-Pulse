@@ -11,6 +11,7 @@ export async function chatStream({ message, sessionId, language, imageB64, profi
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId, language, image_b64: imageB64, profile }),
   });
+  if (res.status === 429) throw Object.assign(new Error("rate limited"), { retryAfter: Number(res.headers.get("Retry-After")) || 60 });
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   const reader = res.body.getReader();
   const dec = new TextDecoder();
