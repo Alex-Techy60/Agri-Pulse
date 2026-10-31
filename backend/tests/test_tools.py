@@ -451,3 +451,37 @@ def test_crop_names_in_hindi_and_marathi_map_to_the_agmarknet_commodity():
     assert commodity_name({}, "मी माझा टोमॅटो विकू का?") == "Tomato"
     assert commodity_name({"crop": "Onion"}, "") == "Onion"
     assert not any(ord(ch) > 127 for k in ALIASES for ch in k)  # the UI dropdown is built from ALIASES: stays English
+
+
+def test_a_half_filled_today_is_left_out_and_the_last_complete_day_is_used():
+    today = dt.date.today()
+    fmt = lambda off: (today - dt.timedelta(days=off)).strftime("%d/%m/%Y")
+
+    def routes(url, params):
+        if "geocoding" in url:
+            return GEO
+        if "open-meteo" in url:
+            return forecast()
+        if "filters[state]" not in params:
+            return {"records": []}
+        recs = mandi_records({fmt(0): [2900], fmt(1): [2500] * 12, fmt(8): [2000] * 12})  # one market so far today, twelve yesterday
+        return {"records": recs}
+
+    install(routes)
+    r = mandi_mod.mandi("", {"place": "Nashik, Maharashtra", "crop": "Onion"})
+    assert r.ok and "only 1 market(s) have reported" in r.text and "latest COMPLETE day" in r.text
+    assert f"{(today).isoformat()}: Rs 2900" not in r.text  # the one-market average is not shown as a price
+    assert r.facts["price"]["latest_date"] == (today - dt.timedelta(days=1)).isoformat()
+    assert "Rs 2900" not in r.text.split("NOTE:")[-1]  # nor used for the highest-market or position lines
+
+
+def test_a_crop_that_always_reports_from_few_markets_is_not_treated_as_partial():
+    from app.decision.price_rules import without_partial_day
+
+    norm = lambda d: [mandi_mod._norm(r) for r in mandi_records(d)]  # the tool normalises raw API keys before this rule runs
+    recs = norm({"01/11/2026": [2500, 2600], "02/11/2026": [2500, 2550], "03/11/2026": [2550, 2560]})
+    kept, note = without_partial_day(recs)
+    assert note is None and kept == recs
+    kept, note = without_partial_day(norm({"02/11/2026": [2500] * 10, "03/11/2026": [2500] * 4}))
+    assert note == {"date": "2026-11-03", "markets": 4, "used": "2026-11-02"} and len(kept) == 10
+    assert without_partial_day(norm({"03/11/2026": [2500]}))[1] is None  # a single day is all there is

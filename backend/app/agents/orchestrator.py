@@ -52,6 +52,7 @@ def script_lang(text: str) -> str:
 TEXT_PROFILE_KEYS = ("place", "crop", "state", "district")
 NUM_PROFILE_KEYS = ("lat", "lon")
 HISTORY_MAX_SESSIONS = 1000
+CORRECTION_BUDGET_S = 45.0  # past this a rejected draft is not rewritten again: on a rate-limited free tier every draft can take 20 s+
 
 
 def clean_profile(profile: dict | None) -> dict:
@@ -123,6 +124,7 @@ class Orchestrator:
 
     def _stream(self, text: str, session_id: str = "default", language: str | None = None, image_b64: str | None = None, profile: dict | None = None) -> Iterator[dict]:
         trace: list[TraceStep] = []
+        t_req = time.time()
         profile = clean_profile(profile)
         if language not in self.domain.languages:  # never let a client-chosen string into the prompt
             language = None
@@ -291,6 +293,10 @@ class Orchestrator:
                 break
             warnings = violations
             yield step("Guardrail", "REJECTED", "; ".join(violations), t0, ok=False)
+            if time.time() - t_req > CORRECTION_BUDGET_S:
+                answer = self.domain.safe_fallback_by_lang.get(lang, self.domain.safe_fallback)
+                yield step("Guardrail", "fallback", "time budget used up; returned safe answer", None, ok=False)
+                break
             messages = messages + [
                 {"role": "assistant", "content": answer},
                 {"role": "user", "content": "Your answer violated these rules:\n- " + "\n- ".join(violations) + "\nRewrite it fixing every violation. Same language, same format."},
@@ -372,12 +378,16 @@ class Orchestrator:
 _FAILURE = re.compile(r"^(\w+?) (?:SOURCE UNAVAILABLE|FAILED: place not found)")
 
 
+# Sentences that are instructions to the model ("Say that in one or two short sentences."), not facts.
+_INSTRUCTION = re.compile(r"\s*(?:Say|Tell|Ask|Do NOT|Never|Report|Lead with|Give|Mention|Use only)\b[^.]*\.")
+
+
 def _plain_failure(text: str) -> str:
-    """Tool failure text carries the exception and request URL for the LLM and the logs; a farmer reading the offline
-    answer gets one plain sentence instead."""
+    """Offline answers show tool text to the farmer. Failure text carries the exception and request URL for the LLM and
+    the logs, so it becomes one plain sentence; instructions meant for the model are dropped from the rest."""
     m = _FAILURE.match(text)
     if not m:
-        return text
+        return _INSTRUCTION.sub("", text)
     what = m.group(1).replace("_", " ").lower()
     if "place not found" in text[: m.end()]:
         return f"The place name could not be matched, so no {what} data is shown. Please give the nearest bigger town or the district name."

@@ -54,6 +54,21 @@ def build_series(records: list[dict]) -> list[dict]:
     return [{"date": d.isoformat(), "modal": round(sum(v) / len(v), 0), "n": len(v)} for d, v in sorted(by.items())]
 
 
+PARTIAL_DAY_RATIO = 0.5  # a newest day with under half the previous day's markets is still being filled in
+
+
+def without_partial_day(records: list[dict]) -> tuple[list[dict], dict | None]:
+    """data.gov.in publishes through the morning, so "today" can hold one or two markets while yesterday has fifty. Prices,
+    market position and the trend are then taken from the last complete day instead of from a handful of markets. Crops that
+    always report from a few markets are untouched (their day-to-day counts are alike). -> (records, note or None)."""
+    series = build_series(records)
+    if len(series) < 2 or series[-1]["n"] >= PARTIAL_DAY_RATIO * series[-2]["n"]:
+        return records, None
+    cutoff = parse_date(series[-2]["date"])
+    kept = [r for r in records if (d := parse_date(r.get("arrival_date", ""))) and d <= cutoff]
+    return kept, {"date": series[-1]["date"], "markets": series[-1]["n"], "used": series[-2]["date"]}
+
+
 def _drop_outliers(vals: list[float]) -> list[float]:
     """Agmarknet has data-entry slips (an extra zero, a Rs/kg row). Drop prices >10x or <1/10 of the day's median."""
     if len(vals) < 3:

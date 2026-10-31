@@ -15,7 +15,7 @@ import logging
 import re
 
 from app.core.config import get_settings
-from app.decision.price_rules import MIN_SHARED_MARKETS, TREND_BAND_PCT, build_series, clean_rows, cross_check, market_position, norm_name, parse_date, trend_evidence, trend_signal
+from app.decision.price_rules import MIN_SHARED_MARKETS, TREND_BAND_PCT, build_series, clean_rows, cross_check, market_position, norm_name, parse_date, trend_evidence, trend_signal, without_partial_day
 from app.tools import NeedsInput, SourceUnavailable, ToolResult, guarded
 from app.tools.http import get_json
 from app.tools.location import resolve_location
@@ -173,7 +173,8 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     if not fetched:
         raise SourceUnavailable("no response from data.gov.in")
     history, hist_fetched, hist_complete = _fetch_history(state_name, commodity, s.data_gov_api_key, s.mandi_history_resource_id, s.mandi_days)
-    series = build_series(records + history)
+    all_recs, partial = without_partial_day(records + history)
+    series = build_series(all_recs)
     src = {"name": "data.gov.in Agmarknet", "url": fetched[0].url, "fetched_at": max(f.fetched_at for f in fetched), "stale": any(f.stale for f in fetched)}
     sources = [src] + ([loc["source"]] if loc.get("source") else [])
     if hist_fetched:
@@ -188,9 +189,9 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
             True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 
-    sig = trend_signal(records + history)
+    sig = trend_signal(all_recs)
     latest_date = series[-1]["date"]
-    latest_recs = [r for r in records + history if _same_day(r.get("arrival_date"), latest_date)]
+    latest_recs = [r for r in all_recs if _same_day(r.get("arrival_date"), latest_date)]
     dist = norm_name(loc.get("district") or loc.get("name") or "")
 
     def row(r):
@@ -203,6 +204,8 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
 
     lines = [f"MANDI PRICES for {commodity} in {where} - data.gov.in Agmarknet, fetched {src['fetched_at']}" + (" [STALE]" if src["stale"] else ""), "Unit: Rs per quintal. Daily average of modal prices across reporting markets:"]
     lines += [f"{p['date']}: Rs {p['modal']:.0f} ({p['n']} markets)" for p in series]
+    if partial:
+        lines.append(f"NOTE: only {partial['markets']} market(s) have reported for {partial['date']} so far, so the latest COMPLETE day, {partial['used']}, is used for everything below. Mention that today's prices are still arriving.")
     if sig["signal"] != "INSUFFICIENT_DATA":
         word = {"HOLD": "prices are RISING", "SELL_NOW": "prices are FALLING", "NEUTRAL": "prices are roughly STEADY"}[sig["signal"]]
         lines.append(

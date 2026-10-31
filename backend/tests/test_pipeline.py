@@ -141,3 +141,30 @@ def test_offline_answer_hides_exception_text_and_urls_from_the_farmer():
 def test_every_supported_language_has_a_native_safe_fallback():
     from app.domain.farm import DOMAIN
     assert set(DOMAIN.languages) - {"en"} == set(DOMAIN.safe_fallback_by_lang)
+
+
+def test_a_slow_request_stops_rewriting_and_returns_the_safe_answer(monkeypatch):
+    import app.agents.orchestrator as orch
+    monkeypatch.setattr(orch, "CORRECTION_BUDGET_S", -1)
+    llm = FakeLLM(["Rain will be 85 mm.", "Rain will be 70.2 mm."])
+    r = run(["good"], llm)
+    assert r.answer == "SAFE" and llm.n == 1  # one draft only, the correct second one is never requested
+    assert [t.action for t in r.trace if t.agent == "Guardrail"] == ["REJECTED", "fallback"]
+
+
+def test_offline_answer_drops_instructions_meant_for_the_model():
+    ctx = "SIGNAL (computed in code): NEUTRAL - prices are roughly STEADY. This is a recent trend, not a forecast. Say that in one or two short sentences.\nNOTE: no markets in Nashik on 2026-10-31. Tell the farmer this, and that the prices below are from other markets."
+    from app.agents.orchestrator import _plain_failure
+    out = _plain_failure(ctx)
+    assert "Say that" not in out and "Tell the farmer" not in out
+    assert "NEUTRAL" in out and "not a forecast" in out and "no markets in Nashik on 2026-10-31" in out
+
+
+def test_keyword_router_understands_marathi_and_hindi_when_the_llm_is_down():
+    from app.domain.farm import DOMAIN
+    o = Orchestrator(DOMAIN, FakeLLM(off=True), StubStore())
+    for text, want in [("मी माझे पीक आता विकू की थांबू?", "sell_or_hold"), ("क्या मैं अपना प्याज़ अभी बेचूँ?", "sell_or_hold"),
+                       ("आज माझ्या पिकाचा बाजारभाव काय आहे?", "market_price"), ("आज मंडी भाव क्या है?", "market_price"),
+                       ("पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "weather_advice"), ("क्या आज दवा छिड़कना सुरक्षित है?", "weather_advice"),
+                       ("या आठवड्यात पाऊस पडेल का?", "weather_advice")]:
+        assert o._route(text, None)[0].name == want, text
