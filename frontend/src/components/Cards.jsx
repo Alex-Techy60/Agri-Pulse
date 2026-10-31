@@ -216,7 +216,64 @@ function Notice({ c, lang }) {
   );
 }
 
-const CARD_TYPES = { notice: Notice, soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+const INVEST_SIGNAL_CLASS = { FAVOURABLE: "hold", MARGINAL: "neutral", UNFAVOURABLE: "sell", INSUFFICIENT_DATA: "" };
+const INVEST_SIGNAL_LABEL = { FAVOURABLE: "Favourable ✓", MARGINAL: "Marginal ~", UNFAVOURABLE: "Unfavourable ✗", INSUFFICIENT_DATA: "Data unavailable" };
+
+function InvestmentInputs({ c }) {
+  const mrp = c.fertilizer_mrp || {};
+  const npk = c.npk || null;
+  const yld = c.yield_range_qtl || null;
+  const sig = c.signal;
+  const sigClass = INVEST_SIGNAL_CLASS[sig?.signal] || "";
+  return (
+    <div className="card">
+      <h3>{c.title || `Investment estimate — ${c.crop}`}</h3>
+      {sig?.signal && (
+        <div className={`flip ${sigClass}`} style={{ marginBottom: "0.5rem" }}>
+          <strong>{INVEST_SIGNAL_LABEL[sig.signal]}</strong>
+          {sig.reason && <span style={{ fontSize: "0.8em", display: "block", marginTop: "0.25rem" }}>{sig.reason}</span>}
+        </div>
+      )}
+      {sig && sig.total_input_cost_rs != null && (
+        <div className="rainstats" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
+          <div><b>₹{sig.total_input_cost_rs?.toLocaleString("en-IN")}</b><span>Input cost/acre</span></div>
+          {sig.net_profit_low_rs != null && <div><b>₹{sig.net_profit_low_rs?.toLocaleString("en-IN")}</b><span>Min net profit</span></div>}
+          {sig.net_profit_high_rs != null && <div><b>₹{sig.net_profit_high_rs?.toLocaleString("en-IN")}</b><span>Max net profit</span></div>}
+        </div>
+      )}
+      {Object.keys(mrp).length > 0 && (
+        <>
+          <h4 style={{ margin: "0.5rem 0 0.25rem", fontSize: "0.8rem", opacity: 0.7 }}>Govt-fixed Fertilizer MRP (PIB/MoAFW)</h4>
+          <table><tbody>
+            {Object.entries(mrp).map(([name, price]) => (
+              <tr key={name}><td>{name}</td><td>₹{price}/bag</td></tr>
+            ))}
+          </tbody></table>
+        </>
+      )}
+      {npk && (
+        <>
+          <h4 style={{ margin: "0.5rem 0 0.25rem", fontSize: "0.8rem", opacity: 0.7 }}>ICAR Recommended Inputs/acre</h4>
+          <div className="rainstats" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
+            <div><b>{npk.N} kg</b><span>Nitrogen (N)</span></div>
+            <div><b>{npk.P} kg</b><span>Phosphorus (P)</span></div>
+            <div><b>{npk.K} kg</b><span>Potassium (K)</span></div>
+          </div>
+        </>
+      )}
+      {yld && (
+        <small style={{ marginTop: "0.5rem", display: "block" }}>
+          ICAR expected yield: {yld.low}–{yld.high} qtl/acre · Confirm with local KVK
+        </small>
+      )}
+      <small className="muted" style={{ marginTop: "0.4rem", display: "block" }}>
+        ⚠ Estimates only. Source: {(c.sources || []).join(", ")}. Always verify with local agriculture officer.
+      </small>
+    </div>
+  );
+}
+
+const CARD_TYPES = { notice: Notice, soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis, investment_inputs: InvestmentInputs };
 
 export function Cards({ cards, lang }) {
   if (!Array.isArray(cards) || !cards.length) return null;
