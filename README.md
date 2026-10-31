@@ -129,6 +129,8 @@ Each row is `correct/total (share, 95 % confidence interval)`. Small samples hav
 
 **Real questions through `/api/chat` (`make eval-live`, 30 questions, 20 s apart)**
 
+_Measured on 31 Oct 2026 **before** the changes of phases 13-20 (reserve model, crop fit, soil, documents, new guardrails, place and market logic). It has not been re-run on the current code: it spends about 75,000 LLM tokens, close to a day's free quota. Re-run `make eval-live` before quoting these numbers; expect more rewrites now that more rules apply._
+
 | What is measured | Result |
 |---|---|
 | Questions answered by the LLM (not offline) | 30/30 |
