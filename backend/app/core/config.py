@@ -60,6 +60,18 @@ class Settings(BaseSettings):
 
     chat_db_path: str = ""  # saved chats (SQLite); empty = backend/data/chats.db. Point at a mounted disk to survive redeploys
 
+    # --- Agricultural inputs (investment advisory) -----------------------
+    # data.gov.in resource ID for live fertilizer price dataset (optional; leave empty to use Govt MRP only).
+    fertilizer_resource_id: str = ""
+
+    # Government-fixed fertilizer MRP (Rs per bag) — PIB/MoAFW notification, updated by policy (not market).
+    # Set via env vars (FERTILIZER_MRP_UREA etc.) to override without code changes.
+    # Defaults: 2025-2026 notified MRP (Source: PIB press release dated April 2024 / MoAFW circular).
+    fertilizer_mrp_urea: float = 242.0   # 45 kg bag, N 46%
+    fertilizer_mrp_dap: float = 1350.0   # 50 kg bag, N 18% P 46%
+    fertilizer_mrp_mop: float = 1700.0   # 50 kg bag, K 60%
+    fertilizer_mrp_npk: float = 1470.0   # 50 kg bag, NPK 10:26:26
+
     # --- Agents ----------------------------------------------------------
     max_self_corrections: int = 2
     history_turns: int = 6
