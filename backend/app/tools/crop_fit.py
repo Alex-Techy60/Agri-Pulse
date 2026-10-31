@@ -69,6 +69,33 @@ def _line(c: cf.Crop, s: dict) -> str:
     return f"- {c.common}: {_detail(c, s)}"
 
 
+def _apply_soil(loc: dict, suitable: list) -> tuple[str, set[str]]:
+    """Crops whose temperature fit is good but whose soil (pH or texture, ISRIC SoilGrids vs EcoCrop tolerance) is ruled out.
+    Best effort: if the soil service does not answer, nothing is removed and the line says the soil was not checked."""
+    from app.decision import soil_rules as sr
+    from app.tools import soil as soil_tool
+
+    try:
+        s, _ = soil_tool.fetch_summary(loc)
+    except SourceUnavailable:
+        return "SOIL not checked: the ISRIC SoilGrids service did not answer, so these crops are not filtered by soil pH or texture. Say that.", set()
+    if s is None:
+        return "SOIL not checked: no soil data for this place (built-up or water), so these crops are not filtered by soil pH or texture. Say that.", set()
+    blocked, notes = set(), []
+    for c, _ in suitable:
+        fit = sr.crop_soil_fit(c, s["ph"], s["texture_group"])
+        why = []
+        if fit["ph"] and fit["ph"]["label"] == "OUTSIDE_TOLERANCE":
+            why.append(f"soil pH {s['ph']:g} is outside its tolerated {fit['ph']['absolute'][0]:g}-{fit['ph']['absolute'][1]:g}")
+        if fit["texture"] == "NOT_TOLERATED":
+            why.append(f"{s['texture_group']} soil texture is not tolerated")
+        if why:
+            blocked.add(c.key)
+            notes.append(f"{c.common} ({'; '.join(why)})")
+    head = f"SOIL used to filter the list: pH {s['ph']:g}, {s['texture_class']} ({s['texture_group']} texture), ISRIC SoilGrids 250 m model estimate."
+    return head + (" FIT THE CLIMATE BUT NOT THE SOIL, so left out of the list above: " + "; ".join(notes) + "." if notes else " No crop in the list above is ruled out by the soil."), blocked
+
+
 def get_crop_fit(profile: dict, text: str = "") -> ToolResult:
     loc = resolve_location(profile)
     today = dt.date.today()
@@ -77,7 +104,9 @@ def get_crop_fit(profile: dict, text: str = "") -> ToolResult:
     where = f"{loc['name']}, {loc['state']}".strip(", ")
     ranked = cf.rank_for_sowing(clim, today, crops)
     suitable = [(c, s) for c, s in ranked if s["temp"] >= cf.GOOD]
-    rain_fed = cf.rain_fed_only(ranked)
+    soil_note, soil_blocked = _apply_soil(loc, suitable)
+    suitable = [(c, s) for c, s in suitable if c.key not in soil_blocked]
+    rain_fed = [(c, s) for c, s in cf.rain_fed_only(ranked) if c.key not in soil_blocked]
     unsuitable = [c.common for c, s in ranked if s["temp"] == 0]
 
     lines = [
@@ -88,6 +117,7 @@ def get_crop_fit(profile: dict, text: str = "") -> ToolResult:
     lines.append(f"SUITABLE CROPS to sow between {today.isoformat()} and {(today + dt.timedelta(days=cf.SOW_LOOKAHEAD_DAYS)).isoformat()}: " + (f"{len(suitable)} crops have a GOOD temperature fit; {min(len(suitable), MAX_SUITABLE_LISTED)} are listed, not ranked by profit. Name at most 5 of them in the answer, one short line each." if suitable else "none has a GOOD temperature fit in this period."))
     lines += [_line(c, s) for c, s in suitable[:MAX_SUITABLE_LISTED]]
     lines.append("RAIN-FED (no irrigation assumed): " + (", ".join(c.common for c, s in rain_fed[:6]) if rain_fed else "none: the rain over a crop cycle starting now is below what these crops need, so they would need irrigation."))
+    lines.append(soil_note)
     if unsuitable:
         lines.append("NOT SUITABLE to sow in this period (temperature fit 0): " + ", ".join(unsuitable[:8]))
 

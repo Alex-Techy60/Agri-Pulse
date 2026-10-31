@@ -90,6 +90,15 @@ def _worth_counting(e: Exception) -> bool:
 
 
 def get_json(url: str, params: dict | None = None, ttl: float | None = None, timeout: float | None = None) -> Fetched:
+    return _get(url, params, ttl, timeout, as_bytes=False)
+
+
+def get_bytes(url: str, params: dict | None = None, ttl: float | None = None, timeout: float | None = None) -> Fetched:
+    """Same cache, breaker and stale rules as get_json, for a binary body (a tiny raster from a map service)."""
+    return _get(url, params, ttl, timeout, as_bytes=True)
+
+
+def _get(url: str, params: dict | None, ttl: float | None, timeout: float | None, as_bytes: bool) -> Fetched:
     global _client
     s = get_settings()
     ttl = s.cache_ttl_s if ttl is None else ttl
@@ -111,7 +120,7 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
             _client = httpx.Client(follow_redirects=True, headers={"User-Agent": USER_AGENT})
         r = _client.get(url, params=params, timeout=timeout or s.tool_timeout_s)
         r.raise_for_status()
-        data = r.json()
+        data = r.content if as_bytes else r.json()
         with _lock:
             empty = isinstance(data, dict) and isinstance(data.get("records"), list) and not data["records"]
             _cache[key] = (now, data, EMPTY_TTL_S if empty else None)

@@ -128,7 +128,22 @@ function CropFit({ c }) {
   );
 }
 
-const CARD_TYPES = { crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+function Soil({ c }) {
+  return (
+    <div className="card">
+      <h3>{c.title}</h3>
+      <div className="rainstats">
+        <div><b>{c.ph}</b><span>pH</span></div>
+        <div><b>{c.clay_pct}%</b><span>clay</span></div>
+        <div><b>{c.sand_pct}%</b><span>sand</span></div>
+        <div><b>{c.organic_carbon_g_kg} g/kg</b><span>organic carbon</span></div>
+      </div>
+      <small className="muted">{c.texture_class} soil. {c.note}</small>
+    </div>
+  );
+}
+
+const CARD_TYPES = { soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
 
 export function Cards({ cards }) {
   if (!cards?.length) return null;

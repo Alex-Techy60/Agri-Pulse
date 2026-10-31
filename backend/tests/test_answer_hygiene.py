@@ -92,3 +92,11 @@ def test_labels_become_phrases_in_the_answers_own_language():
     t = plain_text("नाशिक: ABOVE_STATE_MEDIAN, RAIN_SHORT_OF_DEMAND और NEW_THING.", DOMAIN.label_text["hi"])
     assert "राज्य के औसत भाव से ऊपर" in t and "बारिश पानी की मांग से कम है" in t and "new thing" in t and "_" not in t
     assert plain_text("price ABOVE_STATE_MEDIAN", None) == "price above state median"  # languages without a table keep plain English words
+
+
+def test_soil_figures_must_be_called_a_model_estimate():
+    ctx = SRC_CTX + "\nSOIL for Nashik: a 250 m MODEL ESTIMATE: pH 7 ..."
+    assert run_all(ALL, "Your soil pH is 7 and it is heavy clay (ISRIC).", ctx)
+    assert not run_all(ALL, "Your soil pH is 7 (a 250 m model estimate, ISRIC SoilGrids), heavy clay. Get a soil test.", ctx)
+    assert not run_all(ALL, "मिट्टी का pH 7 है, यह अनुमान है; मिट्टी की जांच कराएं।", ctx)
+    assert not run_all(ALL, "Wheat sowing is fine.", ctx)  # no soil figure, nothing to qualify

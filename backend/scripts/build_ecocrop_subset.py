@@ -29,7 +29,7 @@ CROPS = {
     "coriander": "Coriandrum sativum", "okra": "Abelmoschus esculentus", "pea": "Pisum sativum", "lentil": "Lens culinaris",
     "sesame": "Sesamum indicum", "sunflower": "Helianthus annuus", "safflower": "Carthamus tinctorius", "spinach": "Spinacia oleracea", "carrot": "Daucus carota",
 }
-KEEP = ["TOPMN", "TOPMX", "TMIN", "TMAX", "ROPMN", "ROPMX", "RMIN", "RMAX", "PHOPMN", "PHOPMX", "PHMIN", "PHMAX", "GMIN", "GMAX", "KTMP", "TEXT", "DRA"]
+KEEP = ["TOPMN", "TOPMX", "TMIN", "TMAX", "ROPMN", "ROPMX", "RMIN", "RMAX", "PHOPMN", "PHOPMX", "PHMIN", "PHMAX", "GMIN", "GMAX", "KTMP", "TEXT", "TEXTR", "DRA"]
 
 
 def main() -> int:

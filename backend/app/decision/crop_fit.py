@@ -49,6 +49,7 @@ class Crop:
     gmax: int
     ktmp: float | None
     texture: str
+    texture_abs: str
     drainage: str
 
 
@@ -69,7 +70,7 @@ def load_crops() -> dict[str, Crop]:
                 continue  # a row without limits cannot be scored: leave the crop out rather than guess
             pair = lambda a, b: (_f(r[a]), _f(r[b])) if _f(r[a]) is not None and _f(r[b]) is not None else None
             out[r["crop"]] = Crop(r["crop"], r["ScientificName"], r["crop"].title(), nums["TOPMN"], nums["TOPMX"], nums["TMIN"], nums["TMAX"], nums["ROPMN"], nums["ROPMX"],
-                                  nums["RMIN"], nums["RMAX"], pair("PHOPMN", "PHOPMX"), pair("PHMIN", "PHMAX"), int(nums["GMIN"]), int(max(nums["GMAX"], nums["GMIN"])), _f(r["KTMP"]), r["TEXT"], r["DRA"])
+                                  nums["RMIN"], nums["RMAX"], pair("PHOPMN", "PHOPMX"), pair("PHMIN", "PHMAX"), int(nums["GMIN"]), int(max(nums["GMAX"], nums["GMIN"])), _f(r["KTMP"]), r["TEXT"], r["TEXTR"], r["DRA"])
     return out
 
 

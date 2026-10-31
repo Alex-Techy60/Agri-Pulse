@@ -6,7 +6,24 @@ import pytest
 from app.decision import crop_fit as cf
 from app.tools import crop_fit as tool
 from app.tools.http import Fetched
-from tests.test_tools import GEO, install
+from tests.test_tools import GEO, install as _install_old
+
+
+def install(routes_fn):
+    """The older helper patches only location/weather/mandi; the archive call lives in the crop_fit tool."""
+    _install_old(routes_fn)
+    tool.get_json = lambda url, params=None, ttl=None, timeout=None: Fetched(routes_fn(url, params or {}), url, "2026-11-01T10:00:00Z", False, 0)
+
+
+HEAVY_CLAY = {"ph": 7.0, "sand_pct": 25, "silt_pct": 30, "clay_pct": 44, "organic_carbon_g_kg": 11.2, "texture_class": "clay", "texture_group": "heavy", "valid_pixels": 100}
+
+
+@pytest.fixture(autouse=True)
+def no_network_soil(monkeypatch):
+    """The tool asks the soil service too; these tests must not reach it (the soil tests have their own)."""
+    from app.tools import soil as soil_tool
+
+    monkeypatch.setattr(soil_tool, "fetch_summary", lambda loc: (HEAVY_CLAY, Fetched(b"", "u", "t", False, 0)))
 
 
 def flat(tmean=25.0, tmin=20.0, tmax=30.0, rain=2.0):
@@ -142,3 +159,26 @@ def test_a_failed_climate_source_is_reported_not_replaced_by_a_guess(monkeypatch
     monkeypatch.setattr(tool, "get_json", boom)
     r = tool.crop_fit("", {"place": "Nashik, Maharashtra"})
     assert not r.ok and "SOURCE UNAVAILABLE" in r.text and "Do NOT guess" in r.text
+
+
+def test_crops_the_soil_rules_out_are_removed_from_the_suitable_list_and_named():
+    install(routes)
+    r = tool.crop_fit("", {"place": "Nashik, Maharashtra"})
+    assert "SOIL used to filter the list: pH 7, clay (heavy texture)" in r.text
+    listed = [ln.split(":")[0][2:] for ln in r.text.splitlines() if ln.startswith("- ")]
+    assert "Bajra" not in listed and "Chilli" not in listed  # heavy texture is not tolerated by either (EcoCrop)
+    line = next(ln for ln in r.text.splitlines() if "FIT THE CLIMATE BUT NOT THE SOIL" in ln)
+    assert "Bajra (heavy soil texture is not tolerated)" in line and "Chilli (heavy soil texture is not tolerated)" in line
+
+
+def test_if_the_soil_service_is_down_nothing_is_filtered_and_the_text_says_so(monkeypatch):
+    from app.tools import SourceUnavailable
+    from app.tools import soil as soil_tool
+
+    def down(loc):
+        raise SourceUnavailable("503")
+
+    monkeypatch.setattr(soil_tool, "fetch_summary", down)
+    install(routes)
+    r = tool.crop_fit("", {"place": "Nashik, Maharashtra"})
+    assert r.ok and "SOIL not checked" in r.text and "not filtered by soil" in r.text and "SUITABLE CROPS" in r.text

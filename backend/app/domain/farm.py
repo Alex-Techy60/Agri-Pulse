@@ -16,6 +16,7 @@ from app.tools.crop_stage import crop_stage
 from app.tools.location import FILLER
 from app.tools.mandi import ALIASES, cross, crop_key, crops_in_text, mandi
 from app.tools.rain_history import rain_history
+from app.tools.soil import soil
 from app.tools.weather import weather
 
 PERSONA = (
@@ -68,6 +69,8 @@ def cites_sources() -> "Validator":
         out = []
         if "MANDI PRICES" in context and money.search(text) and not agmarknet.search(text):
             out.append("Gives a price without naming its source. Say it comes from data.gov.in Agmarknet.")
+        if "SOIL for" in context and re.search(r"\bpH\b|\u092a\u0940\u090f\u091a|texture|\u092c\u0928\u093e\u0935\u091f|\u0938\u092b\u093e\u0908", text, re.I) and not re.search(r"estimate|SoilGrids|model|\u0905\u0928\u0941\u092e\u093e\u0928|\u0905\u0902\u0926\u093e\u091c|\u092e\u0949\u0921\u0932", text, re.I):
+            out.append("Gives soil figures without saying they are a model estimate (250 m, ISRIC SoilGrids), not a measurement of the field. Say so, and suggest a soil test.")
         if "WEATHER for" in context and weather.search(text) and not meteo.search(text):
             out.append("Gives a weather figure without naming its source. Say it comes from Open-Meteo.")
         return out
@@ -105,7 +108,7 @@ LABEL_TEXT = {
         "NEEDS_IRRIGATION": "सिंचाई चाहिए", "NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED": "बारिश बहुत कम है, सिंचाई ज़रूरी", "RAIN_COVERS_NEED": "बारिश से ज़रूरत पूरी होती है",
         "WETTER_THAN_OPTIMUM": "ज़रूरत से ज़्यादा बारिश", "FAR_WETTER_THAN_CROP_TOLERATES": "फसल की सहनसीमा से बहुत ज़्यादा बारिश", "NOT_SUITABLE": "उपयुक्त नहीं",
         "BEFORE_EARLIEST_HARVEST": "कटाई का समय अभी नहीं आया", "IN_HARVEST_WINDOW": "कटाई का समय चल रहा है", "PAST_LATEST_CYCLE": "सामान्य अवधि से आगे निकल चुकी", "NOT_SOWN_YET": "अभी बोई नहीं गई",
-        "OUTSIDE_TOLERANCE": "सहनसीमा से बाहर",
+        "OUTSIDE_TOLERANCE": "सहनसीमा से बाहर", "NOT_TOLERATED": "सहन नहीं करती", "TOLERATED": "सहन कर लेती है", "ACCEPTABLE": "स्वीकार्य",
         "HEAVY_RAIN": "भारी बारिश", "HEAT_STRESS": "गर्मी का तनाव", "COLD_STRESS": "ठंड का तनाव", "INSUFFICIENT_DATA": "पर्याप्त आंकड़े नहीं",
     },
     "mr": {
@@ -117,7 +120,7 @@ LABEL_TEXT = {
         "NEEDS_IRRIGATION": "सिंचन लागेल", "NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED": "पाऊस खूप कमी, सिंचन आवश्यक", "RAIN_COVERS_NEED": "पावसाने गरज भागते",
         "WETTER_THAN_OPTIMUM": "गरजेपेक्षा जास्त पाऊस", "FAR_WETTER_THAN_CROP_TOLERATES": "पिकाच्या सहनशक्तीपेक्षा खूप जास्त पाऊस", "NOT_SUITABLE": "योग्य नाही",
         "BEFORE_EARLIEST_HARVEST": "काढणीची वेळ अजून आलेली नाही", "IN_HARVEST_WINDOW": "काढणीचा काळ सुरू आहे", "PAST_LATEST_CYCLE": "नेहमीच्या कालावधीपेक्षा पुढे गेले", "NOT_SOWN_YET": "अजून पेरलेले नाही",
-        "OUTSIDE_TOLERANCE": "सहनशक्तीच्या बाहेर",
+        "OUTSIDE_TOLERANCE": "सहनशक्तीच्या बाहेर", "NOT_TOLERATED": "सहन करत नाही", "TOLERATED": "सहन करते", "ACCEPTABLE": "स्वीकारार्ह",
         "HEAVY_RAIN": "मुसळधार पाऊस", "HEAT_STRESS": "उष्णतेचा ताण", "COLD_STRESS": "थंडीचा ताण", "INSUFFICIENT_DATA": "पुरेशी माहिती नाही",
     },
 }
@@ -133,18 +136,18 @@ DOMAIN = Domain(
         Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT. If CONTEXT has a WATER BALANCE line, say in plain words whether the coming rain covers the crop's water demand and by how many mm; it is a reference figure, not the exact need of the crop.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश", "पाऊस", "हवामान", "फवारणी", "छिड़क", "सिंचाई", "सिंचन", "तापमान", "baarish", "barish", "mausam", "dawai", "chhidk"]),
         Intent("sow_or_crop_care", "soil moisture, crop care and field work this week", "Use soil moisture and the 7-day rain outlook from CONTEXT. If CONTEXT has CROP FIT lines, use them for the sowing window and harvest window of the farmer's crop (a climate guide, to be confirmed with the agriculture officer); say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई", "पेरणी", "काढणी", "माती", "मिट्टी"]),
         Intent("crop_suggest", "which crop to grow or sow now, what is suitable for my place, best time to sow, when will my crop be ready to harvest",
-               "Use ONLY the CROP FIT lines in CONTEXT. List the suitable crops with their temperature fit, sowing date, harvest window and whether rain or irrigation covers the need; say these are crops that fit the climate, not a ranking by profit, and that soil, variety, water supply and prices are not included. For the farmer's own crop give the sowing windows and, if a SOWN line exists, say whether it is before, inside or past the usual harvest window. Tell the farmer to confirm with the local agriculture officer or KVK. Never name a crop, date or cycle that is not in CONTEXT.",
+               "Use ONLY the CROP FIT lines in CONTEXT. List the suitable crops with their temperature fit, sowing date, harvest window and whether rain or irrigation covers the need; say these are crops that fit the climate, not a ranking by profit, and that soil, variety, water supply and prices are not included. For the farmer's own crop give the sowing windows and, if a SOWN line exists, say whether it is before, inside or past the usual harvest window. If CONTEXT has SOIL lines, give the pH and texture as a 250 m model estimate (not a measurement of the field), the SOIL FIT for the farmer's crop, and the crops the soil does not suit; never judge the soil beyond those lines. Tell the farmer to confirm with the local agriculture officer or KVK and, for the soil, to get a soil test. Never name a crop, date or cycle that is not in CONTEXT.",
                ["which crop", "what crop", "what to grow", "what to plant", "what should i sow", "what should i grow", "suitable crop", "best crop", "when to sow", "when to plant", "when to harvest", "ready to harvest", "कौन सी फसल", "कौन सा फसल", "क्या उगाऊं", "क्या लगाऊं", "कब बोएं", "कब बोना", "कब काटें", "कटाई कब", "कोणते पीक", "कोणतं पीक", "काय पेरू", "कधी पेरावे", "कधी काढणी", "काढणी कधी", "kaun si fasal", "kab boyen", "kab kaatein", "konsa pik"]),
         Intent("crop_health", "plant disease, pest, yellow or spotted leaves, a photo of a sick crop", "If CONTEXT has no IMAGE ASSESSMENT, you cannot see the plants: say so, ask the farmer to send a clear photo with the camera button or to describe the symptoms, and send them to the local KVK or agriculture officer; never say a data source is unreachable (none is involved) and never name a spray. Otherwise use the IMAGE ASSESSMENT in CONTEXT only. Describe the visible symptoms and possible causes in simple words, say it is a visual guess, and tell the farmer to show the plants to the local KVK or agriculture officer. No pesticide names, doses or rates.", ["disease", "pest", "leaf", "leaves", "yellow", "spot", "insect", "photo", "रोग", "कीट", "पत्ते", "पाने", "पान", "डाग", "धब्बे", "किडी", "फोटो", "bimari", "keeda", "daag", "patta", "patte"]),
         Intent("general", "greeting or anything else", "You can only help with this farm's weather, rain, mandi prices, when to sell, and photos of sick crops. For anything else (government schemes and eligibility, loans, insurance, news, sports) say plainly that you have no verified information on it, point to the local agriculture officer or KVK, and invite a question about weather, prices or when to sell. Never start an eligibility check and never ask for personal or land details.", []),
     ],
-    tools={"crop_fit": crop_fit, "weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage},
+    tools={"soil": soil, "crop_fit": crop_fit, "weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage},
     intent_tools={
         "sell_or_hold": ["mandi", "weather"],
         "market_price": ["mandi"],
         "weather_advice": ["weather", "rain_history"],
-        "sow_or_crop_care": ["weather", "rain_history", "crop_fit"],
-        "crop_suggest": ["crop_fit", "weather"],
+        "sow_or_crop_care": ["weather", "rain_history", "crop_fit", "soil"],
+        "crop_suggest": ["crop_fit", "weather", "soil"],
     },
     label_text=LABEL_TEXT,
     question_overrides=question_overrides,
@@ -154,6 +157,7 @@ DOMAIN = Domain(
         "weather": "7-day forecast, soil moisture, risk flags, spray-safe days, irrigation advice",
         "mandi": "last 7 days of mandi prices for the crop, nearby markets, sell/hold signal",
         "rain_history": "rain in the last 7/14/30 days vs next 7 days; dry-spell, irrigation-urgent and waterlogging alerts",
+        "soil": "soil pH, texture and organic carbon around the place (ISRIC SoilGrids model estimate) and whether the farmer's crop tolerates them",
         "crop_fit": "which crops fit this place's climate now, best sowing windows for the farmer's crop, harvest window from a sowing date",
     },
     post_tools={"sell_or_hold": ["cross_check"], "weather_advice": ["crop_stage"], "sow_or_crop_care": ["crop_stage"]},
@@ -190,6 +194,7 @@ DOMAIN = Domain(
     soft_validators=[
         cites_sources(),  # a Rs figure names Agmarknet, a weather figure names Open-Meteo
         forbid_patterns({
+            r"\borganic carbon\b[^.]{0,40}\b(?:good|poor|low|high|rich|adequate|sufficient|ideal)\b": "Judges the organic carbon (good, low...). There is no verified threshold: state the number only.",
             r"\bsoil(?: moisture)?\s+(?:is|are|was|looks|seems|appears|remains)\s+(?:\w+\s+){0,2}(?:dry|wet|low|high|moist|saturated|waterlogged)\b": "Judges the soil (dry, wet, low...). Only the numbers are known; state them without a verdict.",
         }),
         forbid_patterns({
