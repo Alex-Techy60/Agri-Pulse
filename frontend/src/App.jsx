@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { chatStream, getDomain, getHealth, transcribe } from "./api.js";
+import { chatStream, getDomain, getHealth, locate, transcribe } from "./api.js";
 import Trace from "./components/Trace.jsx";
 import { Cards, Sources } from "./components/Cards.jsx";
 
@@ -11,9 +11,9 @@ const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* pr
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // the API caps image_b64 at about 5 MB
 // The few messages written by the UI itself (everything else comes from the API in the farmer's language).
 const UI_TEXT = {
-  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question.", nomic: "The microphone is not available. Allow microphone access (the page needs https), or type your question." },
-  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।", nomic: "माइक्रोफ़ोन उपलब्ध नहीं है। माइक्रोफ़ोन की अनुमति दें (पेज https पर होना चाहिए) या सवाल लिखें।" },
-  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा.", nomic: "मायक्रोफोन उपलब्ध नाही. मायक्रोफोनची परवानगी द्या (पेज https वर असावे) किंवा प्रश्न लिहा." },
+  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question.", nomic: "The microphone is not available. Allow microphone access (the page needs https), or type your question.", useloc: "Use my location", noloc: "I could not get your location. Allow location access (the page needs https), or type your village or town." },
+  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।", nomic: "माइक्रोफ़ोन उपलब्ध नहीं है। माइक्रोफ़ोन की अनुमति दें (पेज https पर होना चाहिए) या सवाल लिखें।", useloc: "मेरी लोकेशन इस्तेमाल करें", noloc: "आपकी लोकेशन नहीं मिल सकी। लोकेशन की अनुमति दें (पेज https पर होना चाहिए) या अपना गाँव या शहर लिखें।" },
+  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा.", nomic: "मायक्रोफोन उपलब्ध नाही. मायक्रोफोनची परवानगी द्या (पेज https वर असावे) किंवा प्रश्न लिहा.", useloc: "माझे स्थान वापरा", noloc: "तुमचे स्थान मिळू शकले नाही. स्थानाची परवानगी द्या (पेज https वर असावे) किंवा तुमचे गाव किंवा शहर लिहा." },
 };
 const uiText = (lang) => UI_TEXT[lang] || UI_TEXT.en;
 // Voice: Chrome/Firefox record webm, Safari/iPhone records mp4, so the recorder picks what the browser supports and the file name follows the real type.
@@ -63,6 +63,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [rec, setRec] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [speak, setSpeak] = useState(false);
   const [profile, setProfile] = useState(loadProfile);
   const [photo, setPhoto] = useState(null);
@@ -109,6 +110,22 @@ export default function App() {
     if (!f) return;
     if (f.size > MAX_PHOTO_BYTES) return alert("Photo is too large. Please use one under 5 MB.");
     setPhoto(f);
+  }
+
+  // "Use my location": the browser's coordinates go to /api/locate only, which hands back a place name; nothing else sees or keeps them.
+  function useLocation() {
+    if (!navigator.geolocation) return botSay(uiText(lang).noloc);
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const out = await locate(pos.coords.latitude, pos.coords.longitude).catch(() => ({}));
+        setLocating(false);
+        if (out.place) { const np = { ...profile, place: out.place }; setProfile(np); saveProfile(np); }
+        else botSay(out.error || uiText(lang).noloc);
+      },
+      () => { setLocating(false); botSay(uiText(lang).noloc); }, // denied, unavailable, or an http page
+      { timeout: 15000, maximumAge: 600000 },
+    );
   }
 
   const botSay = (text) => setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
@@ -186,6 +203,7 @@ export default function App() {
               onChange={(e) => { const np = { ...profile, [f.key]: e.target.value }; setProfile(np); saveProfile(np); }}
             />
             {f.options && <datalist id={`opt-${f.key}`}>{f.options.map((o) => <option key={o} value={o} />)}</datalist>}
+            {f.key === "place" && <button type="button" className="loc" onClick={useLocation} disabled={locating}>📍 {locating ? "…" : uiText(lang).useloc}</button>}
           </label>
         ))}
       </div>

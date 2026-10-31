@@ -42,3 +42,4 @@ export async function transcribe(blob, language, ext = "webm") {
 }
 
 export const liveCheck = (place, crop) => fetch(`/api/live-check?place=${encodeURIComponent(place)}&crop=${encodeURIComponent(crop)}`).then(j);
+export const locate = (lat, lon) => fetch(`/api/locate?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`).then(j);

@@ -5,7 +5,7 @@ import secrets
 import httpx
 from fastapi.concurrency import run_in_threadpool
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,8 @@ from app.core import stats
 from app.core.config import get_settings
 from app.llm.client import get_llm
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
+from app.tools import PlaceNotFound
+from app.tools.reverse_geo import locate
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger("api")
@@ -146,6 +148,19 @@ async def transcribe(request: Request, file: UploadFile = File(...), language: s
         log.warning("transcription failed: %s", type(e).__name__)  # type only: the message holds the provider URL
         busy = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
         return {"text": "", "error": "The speech service is busy. Please try again in a minute." if busy else "Speech recognition failed. Please type your question."}
+
+
+@router.get("/locate")
+def locate_place(request: Request, lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180)):
+    """'Use my location': coordinates -> a place name the weather and mandi tools resolve. Never stores or logs the coordinates."""
+    enforce(request, "locate")
+    try:
+        return locate(lat, lon)
+    except PlaceNotFound as e:
+        return {"error": f"I could not match your location to a place in India ({e}). Please type your village or town."}
+    except Exception as e:
+        log.warning("locate failed: %s", type(e).__name__)
+        return {"error": "The location service is not reachable right now. Please type your village or town."}
 
 
 @router.post("/ingest")
