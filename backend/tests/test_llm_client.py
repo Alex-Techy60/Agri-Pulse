@@ -91,7 +91,7 @@ def test_primary_only_skips_the_fallback():
 
     s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
     r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], primary_only=True, offline="OFF")
-    assert hosts == ["p.test"] and r.provider == "offline"
+    assert set(hosts) == {"p.test"} and r.provider == "offline"  # the reserve model shares the provider; the slow fallback is skipped
 
 
 def test_a_dropped_connection_is_retried_once_before_the_fallback(monkeypatch):
@@ -172,3 +172,21 @@ def test_stock_silence_phrases_and_punctuation_only_output_are_dropped_even_when
     assert speech_text({"text": " धन्यवाद।"}) == "" and speech_text({"text": "Thanks for watching!"}) == ""
     assert speech_text({"text": "Thank you, should I sell my onions?"}) == "Thank you, should I sell my onions?"  # only the bare phrase is dropped
     assert speech_text({"text": " मी कांदा विकू का?"}) == "मी कांदा विकू का?"
+
+
+def test_reserve_model_answers_when_the_big_models_quota_is_spent_before_the_slow_fallback():
+    import httpx
+
+    models = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        models.append((req.url.host, body["model"]))
+        if body["model"] == "big":
+            return httpx.Response(429, json={"error": "tokens per day"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from small"}}]})
+
+    s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1", llm_model="big", llm_fast_model="small", fallback_api_key="k2", fallback_base_url="https://f.test/v1", fallback_model="m")
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from small" and r.provider == "reserve" and r.model == "small" and not r.degraded
+    assert all(h == "p.test" for h, _ in models)  # the slow fallback was never needed

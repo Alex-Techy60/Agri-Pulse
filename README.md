@@ -13,7 +13,7 @@ React UI ──SSE──▶ FastAPI /api/chat/stream ──▶ Orchestrator
   → Retriever → Specialist (LLM, user's language) → Guardrails in code ⟲ self-correct → answer + cards + sources
 Photo: Vision model → structured diagnosis card (symptoms, severity, possible causes; no brands or doses)
 ```
-Every step appears in the live **Agent Trace**. LLM calls go Groq → OpenRouter fallback → offline mode (live data only, no AI summary).
+Every step appears in the live **Agent Trace**. LLM calls go Groq main model → Groq small model (own daily quota) → OpenRouter fallback → offline mode (live data only, no AI summary).
 
 ## Run it
 ```bash
@@ -40,7 +40,7 @@ Place lookup for "use my location": © OpenStreetMap contributors (ODbL) via Nom
 | Pre-event generic boilerplate | Built during FORGE '26 (after 30 Oct 7:30 PM IST) |
 |---|---|
 | LLM client w/ provider fallback, vector-store wrapper, SSE API shell, React/Vite shell, Docker/CI files | Farm domain, live weather/soil + mandi tools, decision rules, grounded-number guardrail, parallel tools, ask-for-missing-input, source-failure handling, profile + forecast/price cards UI |
-| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, Devanagari place and crop input (native-script geocoding), "use my location" button with reverse geocoding, Hindi and Marathi suggested questions, UI messages, safe answers and router keywords, last-complete-day rule for half-filled mandi days, offline answers without internals, crop photo upload, phone layout, hermetic tests (187, no network or keys needed) |
+| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, Devanagari place and crop input (native-script geocoding), "use my location" button with reverse geocoding, Hindi and Marathi suggested questions, UI messages, safe answers and router keywords, last-complete-day rule for half-filled mandi days, offline answers without internals, crop photo upload, phone layout, Groq reserve-model tier, LLM quota probe in `make check-live`, hermetic tests (190, no network or keys needed) |
 
 The commit history is the evidence: `git log` shows the work added after the starter.
 

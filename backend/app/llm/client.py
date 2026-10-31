@@ -56,6 +56,10 @@ class LLMClient:
         providers = []
         if s.llm_api_key:
             providers.append(("primary", s.llm_base_url, s.llm_api_key, s.llm_fast_model if fast else s.llm_model))
+            if not fast and s.llm_fast_model != s.llm_model:
+                # Groq limits tokens per model: when the big model's daily quota is spent, the small one
+                # (own quota, ~1 s) still answers, instead of the 20-35 s free fallback.
+                providers.append(("reserve", s.llm_base_url, s.llm_api_key, s.llm_fast_model))
         if s.fallback_api_key and s.fallback_base_url and s.fallback_model and not primary_only:
             providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model))
 
@@ -97,7 +101,7 @@ class LLMClient:
                     provider=name,
                     model=model,
                     ms=int((time.time() - t0) * 1000),
-                    degraded=name != "primary",
+                    degraded=name not in ("primary", "reserve"),  # reserve is the same provider; the trace names the model
                     raw=data,
                 )
             except Exception as e:  # network, 429, 5xx, bad JSON...
