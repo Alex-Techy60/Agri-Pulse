@@ -40,13 +40,25 @@ SCRIPT_LANG = [("\u0900", "\u097f", "hi"), ("\u0980", "\u09ff", "bn"), ("\u0a00"
                ("\u0b80", "\u0bff", "ta"), ("\u0c00", "\u0c7f", "te"), ("\u0c80", "\u0cff", "kn"), ("\u0d00", "\u0d7f", "ml")]
 
 
+# Hindi and Marathi share Devanagari, and the router LLM confuses them (a Marathi question was answered in Hindi on 31 Oct 2026).
+# Words that exist in only one of the two settle it; a message with markers of both, or neither, is left to the caller.
+_MARATHI_WORDS = re.compile(r"(?<![\u0900-\u097f])(?:आहे|आहेत|आहात|काय|मला|माझ\w*|आणि|पाऊस|विकू|थांबू|करू|करावे|किती|नाही|तुमच\w*|आमच\w*)(?![\u0900-\u097f])")
+_HINDI_WORDS = re.compile(r"(?<![\u0900-\u097f])(?:है|हैं|क्या|मुझे|मेरा|मेरी|मेरे|और|बारिश|बेचूं|बेचूँ|रुकूं|करूं|कितना|कितनी|नहीं|आपका|आपके)(?![\u0900-\u097f])")
+
+
+def devanagari_lang(text: str) -> str | None:
+    mr, hi = bool(_MARATHI_WORDS.search(text)), bool(_HINDI_WORDS.search(text))
+    return "mr" if mr and not hi else "hi" if hi and not mr else None
+
+
 def script_lang(text: str) -> str:
     counts: dict[str, int] = {}
     for ch in text:
         for lo, hi, code in SCRIPT_LANG:
             if lo <= ch <= hi:
                 counts[code] = counts.get(code, 0) + 1
-    return max(counts, key=counts.get) if counts else "en"
+    code = max(counts, key=counts.get) if counts else "en"
+    return (devanagari_lang(text) or "hi") if code == "hi" else code
 
 
 TEXT_PROFILE_KEYS = ("place", "crop", "state", "district")
@@ -64,6 +76,17 @@ def clean_profile(profile: dict | None) -> dict:
         elif k in NUM_PROFILE_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool) and -180 <= v <= 180:
             out[k] = float(v)
     return out
+
+
+def _named_place(value, text: str) -> str:
+    """A place or crop the router says the question names. The router is an LLM, so the answer is only trusted if the words really
+    occur in the question (a hallucinated or injected place is dropped); the live geocoder then has the last word."""
+    if not isinstance(value, str):
+        return ""
+    place = " ".join(value.split())
+    if not 2 <= len(place) <= 60 or place.lower() not in text.lower():
+        return ""
+    return place
 
 
 @dataclass
@@ -169,9 +192,19 @@ class Orchestrator:
 
         # 2) Route ---------------------------------------------------------------
         t0 = time.time()
-        intent, lang, why, r_deg = self._route(text, language)
+        intent, lang, why, r_deg, named = self._route(text, language)
         degraded |= r_deg
         yield step("Router", f"intent={intent.name}", f"lang={lang}; {why}", t0)
+
+        # What the question itself names beats the profile form for this turn (the stored profile is not changed).
+        ui_profile = dict(profile)
+        over = self.domain.question_overrides(profile, named, text) if self.domain.question_overrides else {}
+        if over:
+            profile = {**profile, **over}
+            if "place" in over:  # coordinates and state belong to the old place
+                for k in ("lat", "lon", "state", "district"):
+                    profile.pop(k, None)
+            yield step("Router", "question overrides profile", ", ".join(f"{k}={v}" for k, v in over.items()))
 
         # 3) Tools: parallel stage, then ordered post-stage ---------------------
         results: dict[str, ToolResult] = {}
@@ -287,14 +320,22 @@ class Orchestrator:
                 warnings = []
                 break  # offline text is built only from real tool output
             t0 = time.time()
-            violations = run_all(self.domain.validators, answer, check_ctx)
-            if not violations:
+            hard = run_all(self.domain.validators, answer, check_ctx)
+            soft = run_all(self.domain.soft_validators, answer, check_ctx)
+            if not hard and not soft:
                 yield step("Guardrail", "passed", "numbers grounded, no unsafe advice", t0)
                 warnings = []
                 break
+            out_of_time = time.time() - t_req > CORRECTION_BUDGET_S
+            if not hard and (attempt >= 1 or attempt == self.s.max_self_corrections or out_of_time):
+                # Only style rules are still broken after a rewrite: a true, safe, slightly clumsy answer beats the generic fallback.
+                yield step("Guardrail", "passed with style notes", "; ".join(soft), t0, ok=False)
+                warnings = []
+                break
+            violations = hard + soft
             warnings = violations
             yield step("Guardrail", "REJECTED", "; ".join(violations), t0, ok=False)
-            if time.time() - t_req > CORRECTION_BUDGET_S:
+            if out_of_time:
                 answer = self.domain.safe_fallback_by_lang.get(lang, self.domain.safe_fallback)
                 yield step("Guardrail", "fallback", "time budget used up; returned safe answer", None, ok=False)
                 break
@@ -306,15 +347,15 @@ class Orchestrator:
             answer = self.domain.safe_fallback_by_lang.get(lang, self.domain.safe_fallback)
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
 
-        answer = plain_text(answer)
+        answer = plain_text(answer, self.domain.label_text.get(lang))
 
         # 6) Remember --------------------------------------------------------------
         if session_id != "default":
             keep = {}
-            if profile.get("crop"):
-                keep["crop"] = str(profile["crop"])[:60]
-            if profile.get("place") and resolved.get("lat") is not None:  # only a place the live geocoder actually found
-                keep["place"] = str(profile["place"])[:100]
+            if ui_profile.get("crop"):
+                keep["crop"] = str(ui_profile["crop"])[:60]
+            if ui_profile.get("place") and not over.get("place") and resolved.get("lat") is not None:  # only a place the live geocoder actually found
+                keep["place"] = str(ui_profile["place"])[:100]
             if keep:
                 with self._lock:
                     self.profiles[session_id] = {**self.profiles.get(session_id, {}), **keep}
@@ -334,7 +375,8 @@ class Orchestrator:
         yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved)}
 
     # -------------------------------------------------------------- internals
-    def _route(self, text: str, language: str | None) -> tuple[Intent, str, str, bool]:
+    def _route(self, text: str, language: str | None) -> tuple[Intent, str, str, bool, dict]:
+        """(intent, language, reason, degraded, {place, crop} the question names; either may be missing)."""
         intents = {i.name: i for i in self.domain.intents}
         listing = "\n".join(f"- {i.name}: {i.description}" for i in self.domain.intents)
         data, res = self.llm.chat_json(
@@ -345,14 +387,16 @@ class Orchestrator:
         if isinstance(name, str) and name in intents:  # LLM JSON is untrusted: a list/dict here would crash the `in` check
             guess = data.get("language")
             guess = guess.strip().lower() if isinstance(guess, str) else ""
-            return intents[name], language or (guess if guess in self.domain.languages else "en"), str(data.get("reason", ""))[:120], res.degraded
+            if guess in ("hi", "mr"):
+                guess = devanagari_lang(text) or guess  # the LLM mixes the two; unambiguous words in the message decide
+            return intents[name], language or (guess if guess in self.domain.languages else "en"), str(data.get("reason", ""))[:120], res.degraded, {"place": _named_place(data.get("place"), text), "crop": _named_place(data.get("crop"), text)}
         low = text.lower()  # keyword fallback: never block on the router
         best, score = self.domain.intents[-1], 0
         for i in self.domain.intents:
             sc = sum(1 for k in i.keywords if k in low)
             if sc > score:
                 best, score = i, sc
-        return best, language or script_lang(text), "keyword fallback", True
+        return best, language or script_lang(text), "keyword fallback", True, {}
 
     def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str) -> list[dict]:
         system = (

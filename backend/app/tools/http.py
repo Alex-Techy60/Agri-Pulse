@@ -16,7 +16,8 @@ import httpx
 from app.core.config import get_settings
 from app.tools import SourceUnavailable
 
-_cache: dict[str, tuple[float, object]] = {}
+_cache: dict[str, tuple[float, object, float | None]] = {}  # key -> (fetched at, data, own ttl or None for the caller's)
+EMPTY_TTL_S = 60.0  # an empty record list may be a blip of the shared free API: do not let it stand for half an hour
 _lock = threading.Lock()
 CACHE_MAX = 2000  # entries; oldest evicted first (unique places x days would otherwise grow without bound)
 
@@ -96,7 +97,7 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
     now = time.time()
     with _lock:
         hit = _cache.get(key)
-    if hit and now - hit[0] < ttl:
+    if hit and now - hit[0] < (hit[2] if hit[2] is not None else ttl):
         return Fetched(hit[1], _public(url, params), _iso(hit[0]), False, int(now - hit[0]))
     host = _host(url)
     with _lock:
@@ -112,7 +113,8 @@ def get_json(url: str, params: dict | None = None, ttl: float | None = None, tim
         r.raise_for_status()
         data = r.json()
         with _lock:
-            _cache[key] = (now, data)
+            empty = isinstance(data, dict) and isinstance(data.get("records"), list) and not data["records"]
+            _cache[key] = (now, data, EMPTY_TTL_S if empty else None)
             if len(_cache) > CACHE_MAX:
                 _cache.pop(next(iter(_cache)))
             _fails.pop(host, None)

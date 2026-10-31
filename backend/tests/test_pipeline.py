@@ -182,3 +182,12 @@ def test_anonymous_default_session_shares_no_history_or_memory():
     o.run("hello", session_id="farmer-1", profile={"place": "Nashik"})
     o.run("and tomorrow?", session_id="farmer-1", profile={"place": "Nashik"})
     assert [m["role"] for m in llm.last_messages] == ["system", "user", "assistant", "user"]  # a real session keeps its turns
+
+
+def test_devanagari_language_marathi_vs_hindi_is_decided_by_words_only_one_has():
+    from app.agents.orchestrator import devanagari_lang, script_lang
+
+    assert devanagari_lang("आज कांद्याचा भाव काय आहे?") == "mr" and devanagari_lang("मी माझा कांदा आता विकू की थांबू?") == "mr"
+    assert devanagari_lang("क्या मैं अपना गेहूं अभी बेचूं?") == "hi" and devanagari_lang("आज प्याज का भाव क्या है और क्या मुझे बेचना चाहिए?") == "hi"
+    assert devanagari_lang("कांदा") is None and devanagari_lang("price") is None
+    assert script_lang("आज कांद्याचा भाव काय आहे?") == "mr" and script_lang("कांदा") == "hi" and script_lang("hello") == "en"

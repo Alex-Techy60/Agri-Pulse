@@ -24,20 +24,29 @@ def forbid_patterns(rules: dict[str, str]) -> Validator:
     return check
 
 
-# The LLM writes typographic apostrophes ("can\u2019t"), so both quote characters must count.
-_NEGATION = re.compile(r"\b(?:not|no|never|cannot|cant|unable|without|nobody|nothing)\b|n['\u2019]t", re.I)
+# The LLM writes typographic apostrophes ("can\u2019t"), so both quote characters must count. Hindi and Marathi put the negation
+# AFTER the noun ("\u0917\u093e\u0930\u0902\u091f\u0940 \u0928\u0939\u0940\u0902 \u0926\u0947 \u0938\u0915\u0924\u093e", "\u0939\u092e\u0940 \u0926\u0947\u0924\u093e \u092f\u0947\u0924 \u0928\u093e\u0939\u0940"), so those rules also look ahead.
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|cannot|cant|unable|without|nobody|nothing)\b|n['\u2019]t"
+    r"|(?<![\u0900-\u097f])(?:\u0928\u0939\u0940\u0902|\u0928\u0939\u0940|\u0928\u093e\u0939\u0940|\u0928\u0915\u094b|\u092c\u093f\u0928\u093e|\u0936\u093f\u0935\u093e\u092f|\u0915\u092d\u0940 \u0928\u0939\u0940\u0902)(?![\u0900-\u097f])",
+    re.I,
+)
+_CLAUSE_END = r"[.!?;\n\u0964]"  # \u0964 = danda, the Hindi/Marathi full stop
 
 
-def forbid_unless_negated(rules: dict[str, str], window: int = 30) -> Validator:
+def forbid_unless_negated(rules: dict[str, str], window: int = 30, after: int = 0) -> Validator:
     """Like forbid_patterns, but a match is ignored when the same clause negates it ("I cannot guarantee profit",
-    "this is not risk-free"). Needed so a correct refusal is not rejected as if it were the forbidden claim."""
+    "this is not risk-free"). Needed so a correct refusal is not rejected as if it were the forbidden claim.
+    `after` > 0 also looks that many characters past the match, for languages that negate after the noun."""
     compiled = [(re.compile(p, re.I), m) for p, m in rules.items()]
 
     def check(text: str) -> list[str]:
         out = []
         for rx, msg in compiled:
             for m in rx.finditer(text):
-                clause = re.split(r"[.!?;\n]", text[max(0, m.start() - window):m.start()])[-1]
+                clause = re.split(_CLAUSE_END, text[max(0, m.start() - window):m.start()])[-1]
+                if after:
+                    clause += " " + re.split(_CLAUSE_END, text[m.end():m.end() + after])[0]
                 if not _NEGATION.search(clause):
                     out.append(msg)
                     break
@@ -201,11 +210,13 @@ def _humanize(m: re.Match) -> str:
     return m.group(0).replace("_", " ") if m.group(0) == "SELL_NOW" else m.group(0).replace("_", " ").lower()
 
 
-def plain_text(text: str) -> str:
+def plain_text(text: str, local: dict[str, str] | None = None) -> str:
     """Strip markdown symbols (the reply may be read aloud, and the prompt alone cannot guarantee it). Touches symbols
-    only: hyphens inside dates and ranges, and every number, stay exactly as they were. Internal rule labels are
-    written as plain words, since the farmer should never see ABOVE_STATE_MEDIAN."""
-    return _LABEL.sub(_humanize, _MD_INLINE.sub("", _MD_LINE_START.sub("", text or ""))).strip()
+    only: hyphens inside dates and ranges, and every number, stay exactly as they were. Internal rule labels never reach the
+    farmer: `local` maps a label to a phrase in the answer's own language; any label it lacks is written as plain English words."""
+    local = local or {}
+    swap = lambda m: local.get(m.group(0)) or _humanize(m)
+    return _LABEL.sub(swap, _MD_INLINE.sub("", _MD_LINE_START.sub("", text or ""))).strip()
 
 
 def run_all(validators: list[Validator], text: str, context: str = "") -> list[str]:

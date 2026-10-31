@@ -12,8 +12,25 @@ exceptions that `guarded()` turns into a clear ToolResult(ok=False):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from functools import wraps
+from urllib.parse import urlparse
+
+# Failure text goes to the LLM, which then repeats it to the farmer: it must name the SOURCE, never a hostname or URL.
+_SOURCE_NAMES = {
+    "geocoding-api.open-meteo.com": "the Open-Meteo place finder", "api.open-meteo.com": "Open-Meteo weather", "api.data.gov.in": "data.gov.in Agmarknet",
+    "data.gov.in": "data.gov.in Agmarknet", "nominatim.openstreetmap.org": "the OpenStreetMap place lookup",
+}
+_URL = re.compile(r"https?://\S+")
+_HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:com|org|in|net|gov)\b", re.I)
+
+
+def safe_failure_text(message: str) -> str:
+    """Drop URLs (they can carry API-key query strings) and replace each hostname by the name of the source."""
+    name = lambda host: _SOURCE_NAMES.get(host.lower(), "the live source")
+    by_url = _URL.sub(lambda m: name(urlparse(m.group(0).strip("'\"")).hostname or ""), message)  # keeps WHICH source, drops the query string
+    return _HOST.sub(lambda m: name(m.group(0)), by_url).strip()
 
 
 class NeedsInput(Exception):
@@ -55,7 +72,7 @@ def guarded(name: str):
                 )
             except SourceUnavailable as e:
                 return ToolResult(
-                    f"{name.upper()} SOURCE UNAVAILABLE ({e}). Do NOT guess these values; "
+                    f"{name.upper()} SOURCE UNAVAILABLE ({safe_failure_text(str(e))}). Do NOT guess these values; "
                     "tell the user this live source is not reachable right now.",
                     ok=False,
                 )

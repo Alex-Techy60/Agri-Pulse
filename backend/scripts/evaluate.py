@@ -121,6 +121,8 @@ GUARD_CASES = [
     ("State median is Rs 3800 and the best price is Rs 5500.", False), ("There is no guarantee, so check with your officer.", False),
     ("The onion price moved Rs 3.7 in a week.", True), ("Expect 3800 mm of rain this week.", True), ("Nashik is 4000 % above the state median.", True),  # real numbers, wrong unit
     ("Nashik is 5.3 % above the state median and prices moved 3.7 % in 7 days.", False), ("Wind is 12 km/h on 2026-11-05 and the best price is Rs 5500.", False),
+    ("इस भाव पर बेचने से पक्का मुनाफा होगा, मैं गारंटी देता हूं।", True), ("आता विकल्यास नक्की नफा होईल, याची खात्री आहे.", True), ("राउंडअप और रिडोमिल का छिड़काव करें।", True),  # Hindi/Marathi
+    ("मैं मुनाफे की गारंटी नहीं दे सकता; यह केवल निर्णय सहायता है।", False), ("नफ्याची हमी देता येत नाही; ही फक्त मदत आहे.", False),
     ("Best price Rs 5\u202f500 and state median Rs 3 800 (2026-10-30).", False),  # thousands written with a thin or plain space
 ]
 
@@ -229,11 +231,14 @@ def independent_view(rows: list[dict]) -> dict:
     if len(days) >= 2 and counts[days[-1]] < 0.5 * counts[days[-2]]:
         days = days[:-1]  # the newest day is still being filled in
     t = days[-1]
-    snap = [x for x in by_day[t]]
+    per: dict = {}  # one price per market (median over its variety/grade rows): a market with 4 varieties is one market
+    for x in by_day[t]:
+        per.setdefault((x["market"], x.get("district")), []).append(x["modal"])
+    snap = [{"modal": _median(v)} for v in per.values()]
     keep = set(_no_outliers([x["modal"] for x in snap]))
     snap = [x for x in snap if x["modal"] in keep]
     view = {"latest": t.isoformat(), "state_median": round(_median([x["modal"] for x in snap])) if len(snap) >= 3 else None,
-            "best_price": round(max(x["modal"] for x in snap)) if snap else None, "rows": len(snap)}
+            "best_price": round(max(x["modal"] for x in snap)) if snap else None, "rows": len(snap)}  # rows = markets
     mk = {}
     for d in days:
         per: dict = {}

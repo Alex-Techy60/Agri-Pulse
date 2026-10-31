@@ -106,7 +106,7 @@ def test_api_rejects_oversized_message_with_422_not_500():
 )
 def test_router_keyword_fallback_handles_emoji_hindi_hinglish(text, intent, lang):
     o = Orchestrator(DOMAIN, FakeLLM(off=True), StubStore())
-    got_intent, got_lang, _, degraded = o._route(text, None)
+    got_intent, got_lang, _, degraded, _ = o._route(text, None)
     assert (got_intent.name, got_lang, degraded) == (intent, lang, True)
 
 
@@ -218,3 +218,13 @@ def test_tools_identify_themselves_with_a_descriptive_user_agent():
         mp.undo()
         http._client = None
     assert seen["ua"] == http.USER_AGENT and "python-httpx" not in seen["ua"] and "KisaanMitra" in seen["ua"]
+
+
+def test_failure_text_names_the_source_and_never_a_hostname_or_url():
+    from app.tools import safe_failure_text
+
+    t = safe_failure_text("HTTPStatusError: Server error '503 Service Unavailable' for url 'https://api.open-meteo.com/v1/forecast?latitude=1&api-key=SECRET'")
+    assert "Open-Meteo weather" in t and "https" not in t and "SECRET" not in t and "api.open-meteo.com" not in t
+    assert "the Open-Meteo place finder" in safe_failure_text("geocoding-api.open-meteo.com is temporarily unreachable (not retrying for 31s)")
+    assert safe_failure_text("no response from data.gov.in") == "no response from data.gov.in Agmarknet"
+    assert safe_failure_text("could not reach evil.example.com") == "could not reach the live source"

@@ -13,9 +13,10 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+import time
 
 from app.core.config import get_settings
-from app.decision.price_rules import MIN_SHARED_MARKETS, TREND_BAND_PCT, build_series, clean_rows, cross_check, market_position, norm_name, parse_date, trend_evidence, trend_signal, without_partial_day
+from app.decision.price_rules import MIN_SHARED_MARKETS, TREND_BAND_PCT, build_series, clean_rows, cross_check, market_position, norm_name, parse_date, per_market, trend_evidence, trend_signal, without_partial_day
 from app.tools import NeedsInput, SourceUnavailable, ToolResult, guarded
 from app.tools.http import get_json
 from app.tools.location import resolve_location
@@ -26,6 +27,7 @@ API = "https://api.data.gov.in/resource/{rid}"
 PAGE, MAX_PAGES = 500, 4  # per-call limit and a cap on pages: a state-level query is far below 2000 rows
 HISTORY_TTL_S = 3600  # new days arrive at most daily, and every cache miss spends rate-limited quota
 HISTORY_PAGES = 2  # 500 rows is about a week for a busy crop in a big state
+HISTORY_RETRY_DELAY_S = 0.6
 HISTORY_TIMEOUT_S = 4.0  # history is an extra: it must not eat the whole request when the API is slow
 
 # UI/common crop name -> Agmarknet commodity name. EVERY name below was checked against the real data.gov.in file of
@@ -60,6 +62,39 @@ NATIVE_CROPS = {
     "आले": "ginger", "अदरक": "ginger", "डाळिंब": "pomegranate", "अनार": "pomegranate", "द्राक्षे": "grapes", "अंगूर": "grapes",
 }
 _DEVANAGARI = "\u0900-\u097f"
+
+
+# Latin-script spellings of Hindi/Marathi crop names (Hinglish: "pyaz ka bhav") and Marathi/Hindi word STEMS: a crop is
+# inflected in a sentence ("कांद्याचा भाव" = onion's price) and would not equal the dictionary form above. A stem is
+# matched only at the start of a Devanagari word and only when it is long enough not to hit unrelated words.
+TRANSLIT_CROPS = {
+    "pyaz": "onion", "pyaaz": "onion", "kanda": "onion", "tamatar": "tomato", "aloo": "potato", "alu": "potato", "batata": "potato",
+    "gehu": "wheat", "gehun": "wheat", "gahu": "wheat", "makka": "maize", "makai": "maize", "chawal": "rice", "dhan": "paddy",
+    "kapas": "cotton", "kapus": "cotton", "sarson": "mustard", "lahsun": "garlic", "haldi": "turmeric", "adrak": "ginger",
+    "tomatoes": "tomato", "onions": "onion", "potatoes": "potato", "chillies": "chilli", "mangoes": "mango", "bananas": "banana",
+}
+CROP_STEMS = {
+    "कांद": "onion", "कांदे": "onion", "प्याज": "onion", "टोमॅट": "tomato", "टमाटर": "tomato", "बटाट": "potato", "गव्ह": "wheat", "गेहू": "wheat",
+    "कापस": "cotton", "सोयाबीन": "soybean", "हरभर": "gram", "तांदळ": "rice", "मक्य": "maize", "ज्वारी": "jowar", "बाजर": "bajra", "भुईमूग": "groundnut",
+}
+
+
+def crops_in_text(text: str) -> list[str]:
+    """Distinct crops named in a question, as lower-case ALIASES keys, in order of first appearance. Used to let the question
+    override the profile crop; with two crops named it is ambiguous and the caller keeps the profile."""
+    found: list[str] = []
+    low = (text or "").lower()
+    for m in re.finditer(r"[a-z]+", low):
+        w = m.group(0)
+        key = TRANSLIT_CROPS.get(w) or (w if w in ALIASES else None)
+        if key and key not in found:
+            found.append(key)
+    for m in re.finditer(rf"[{_DEVANAGARI}]+", text or ""):
+        w = m.group(0)
+        key = NATIVE_CROPS.get(w) or next((c for st, c in CROP_STEMS.items() if w.startswith(st)), None)
+        if key and key not in found:
+            found.append(key)
+    return found
 
 
 def crop_key(crop: str) -> str:
@@ -104,7 +139,7 @@ def _same(a, b) -> bool:
     return " ".join(str(a).lower().split()) == " ".join(str(b).lower().split())
 
 
-def _fetch_records(state: str, commodity: str, key: str, rid: str, style: str):
+def _fetch_records(state: str, commodity: str, key: str, rid: str, style: str, ttl: float | None = None):
     """Returns (records, Fetched|None). Verified against the live API (30 Oct 2026):
     * lower-case filter names work (`filters[state]`); Title-case ones match nothing;
     * the date filter is ignored (yesterday returns the same total as today): this resource publishes only the current day;
@@ -118,7 +153,7 @@ def _fetch_records(state: str, commodity: str, key: str, rid: str, style: str):
         got: list[dict] = []
         for page in range(MAX_PAGES):
             params = {"api-key": key, "format": "json", "limit": PAGE, "offset": page * PAGE, f"filters[{names[0]}]": state, f"filters[{names[1]}]": commodity}
-            f = get_json(API.format(rid=rid), params, ttl=get_settings().cache_ttl_s * 2)
+            f = get_json(API.format(rid=rid), params, ttl=get_settings().cache_ttl_s * 2 if ttl is None else ttl)
             last = f
             data = f.data if isinstance(f.data, dict) else {}
             batch = [_norm(r) for r in (data.get("records") or [])]
@@ -135,7 +170,7 @@ def _fetch_records(state: str, commodity: str, key: str, rid: str, style: str):
     return [], last
 
 
-def _fetch_history(state: str, commodity: str, key: str, rid: str, days: int):
+def _fetch_history(state: str, commodity: str, key: str, rid: str, days: int, ttl: float = HISTORY_TTL_S):
     """The `days - 1` days before today -> (records, [Fetched], complete). Raw rows on purpose: build_series averages and
     cleans them. One sorted call instead of one per day, because data.gov.in rate limits (429) a burst and that would trip
     the shared circuit breaker and take today's prices down too. A failure only loses the trend, so it never raises."""
@@ -144,10 +179,16 @@ def _fetch_history(state: str, commodity: str, key: str, rid: str, days: int):
     records, fetched = [], []
     for page in range(HISTORY_PAGES):
         params = {"api-key": key, "format": "json", "limit": PAGE, "offset": page * PAGE, "filters[State]": state, "filters[Commodity]": commodity, "sort[Arrival_Date]": "desc"}
-        try:
-            f = get_json(API.format(rid=rid), params, ttl=HISTORY_TTL_S, timeout=HISTORY_TIMEOUT_S)
-        except Exception as e:
-            log.warning("price history unavailable: %s", type(e).__name__)
+        f = None
+        for attempt in range(2):  # the shared free API drops the odd request; losing the history silently loses the trend
+            try:
+                f = get_json(API.format(rid=rid), params, ttl=ttl, timeout=HISTORY_TIMEOUT_S)
+                break
+            except Exception as e:
+                log.warning("price history unavailable (attempt %d): %s", attempt + 1, type(e).__name__)
+                if attempt == 0:
+                    time.sleep(HISTORY_RETRY_DELAY_S)
+        if f is None:
             return records, fetched, False
         batch = [_norm(r) for r in ((f.data if isinstance(f.data, dict) else {}).get("records") or [])]
         dates = [d for d in (parse_date(r.get("arrival_date", "")) for r in batch) if d]
@@ -156,6 +197,14 @@ def _fetch_history(state: str, commodity: str, key: str, rid: str, days: int):
         if len(batch) < PAGE or not dates or min(dates) < oldest:
             break
     return records, fetched if records else [], True
+
+
+def own_markets(rows: list[dict], names: list[str]) -> list[dict]:
+    """Markets (one row each, see per_market) whose name matches the place the farmer gave: "Lasalgaon" -> "Lasalgaon(Vinchur)".
+    Names shorter than 4 letters are not matched (substring hits on unrelated markets). At most 3, best-priced first."""
+    keys = {k for k in (norm_name(n) for n in names) if len(k) >= 4}
+    hits = [r for r in rows if r.get("market") and any(k in norm_name(r["market"]) for k in keys)]
+    return sorted(hits, key=lambda r: r["modal"], reverse=True)[:3]
 
 
 def get_mandi(profile: dict, text: str = "") -> ToolResult:
@@ -173,6 +222,11 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     if not fetched:
         raise SourceUnavailable("no response from data.gov.in")
     history, hist_fetched, hist_complete = _fetch_history(state_name, commodity, s.data_gov_api_key, s.mandi_history_resource_id, s.mandi_days)
+    if not records and not history:  # an empty answer can be a blip of the shared free API: ask once more, uncached, before saying "no data"
+        time.sleep(HISTORY_RETRY_DELAY_S)
+        again, f2 = _fetch_records(state_name, commodity, s.data_gov_api_key, s.mandi_resource_id, s.mandi_filter_style, ttl=0)
+        history, hist_fetched, hist_complete = _fetch_history(state_name, commodity, s.data_gov_api_key, s.mandi_history_resource_id, s.mandi_days, ttl=0)
+        records, fetched = again, ([f2] if f2 is not None else fetched)
     all_recs, partial = without_partial_day(records + history)
     series = build_series(all_recs)
     src = {"name": "data.gov.in Agmarknet", "url": fetched[0].url, "fetched_at": max(f.fetched_at for f in fetched), "stale": any(f.stale for f in fetched)}
@@ -185,7 +239,7 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         span = f"in the last {s.mandi_days} days" if hist_complete else "today (earlier days could not be checked: the history source did not respond)"
         return ToolResult(
             f"MANDI PRICES: no published records for {commodity} in {where} {span} "
-            f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices."
+            f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices, do not call prices neutral or steady, and give no sell or hold view."
             + (" The source answered normally and simply holds no records for this crop, so never say it is unreachable; suggest checking the crop name." if hist_complete else ""),
             True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
@@ -198,15 +252,16 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     def row(r):
         return {"market": r.get("market"), "district": r.get("district"), "modal": _num(r.get("modal_price")), "min": _num(r.get("min_price")), "max": _num(r.get("max_price"))}
 
-    rows = clean_rows([row(r) for r in latest_recs if _num(r.get("modal_price"))])
+    rows = clean_rows(per_market([row(r) for r in latest_recs if _num(r.get("modal_price"))]))
     near = [r for r in rows if dist and norm_name(r["district"]) == dist][:3]
     top = sorted(rows, key=lambda r: r["modal"], reverse=True)[:3]
     position = market_position(rows, loc.get("district") or loc.get("name") or "")
+    own = own_markets(rows, [loc.get("name") or "", (profile.get("place") or "").split(",")[0]])
 
-    lines = [f"MANDI PRICES for {commodity} in {where} - data.gov.in Agmarknet, fetched {src['fetched_at']}" + (" [STALE]" if src["stale"] else ""), "Unit: Rs per quintal. Daily average of modal prices across reporting markets:"]
-    lines += [f"{p['date']}: Rs {p['modal']:.0f} ({p['n']} markets)" for p in series]
+    lines = [f"MANDI PRICES for {commodity} in {where} - data.gov.in Agmarknet, fetched {src['fetched_at']}" + (" [STALE]" if src["stale"] else ""), "Unit: Rs per quintal. Daily average of the modal prices reported that day (one report per variety and market):"]
+    lines += [f"{p['date']}: Rs {p['modal']:.0f} ({p['n']} price reports)" for p in series]
     if partial:
-        lines.append(f"NOTE: only {partial['markets']} market(s) have reported for {partial['date']} so far, so the latest COMPLETE day, {partial['used']}, is used for everything below. Mention that today's prices are still arriving.")
+        lines.append(f"NOTE: only {partial['markets']} price report(s) have come in for {partial['date']} so far, so the latest COMPLETE day, {partial['used']}, is used for everything below. Mention that today's prices are still arriving.")
     if sig["signal"] != "INSUFFICIENT_DATA":
         word = {"HOLD": "prices are RISING", "SELL_NOW": "prices are FALLING", "NEUTRAL": "prices are roughly STEADY"}[sig["signal"]]
         lines.append(
@@ -217,6 +272,9 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     else:
         lines.append(f"SIGNAL: INSUFFICIENT_DATA (no comparable day about a week earlier with at least {MIN_SHARED_MARKETS} markets in common). Say plainly that a price trend is not available and report today's prices and the market position only.")
     district_label = loc.get("district") or loc["name"]
+    if own:
+        lines.append(f"YOUR MARKET on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f} per quintal" + (f" (lowest Rs {m['min']:.0f}, highest Rs {m['max']:.0f})" if m.get("min") and m.get("max") else "") for m in own)
+                     + ". The market name matches the farmer's place: lead with this price, it is the farmer's own mandi, and say it is one price per market (median over varieties).")
     if near:
         lines.append(f"MARKETS in {district_label} on {latest_date}: " + "; ".join(f"{m['market']} Rs {m['modal']:.0f}" for m in near))
     elif top:  # small town / district with no reporting mandi: say so, then show the state's markets instead
@@ -229,8 +287,8 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     if top:
         lines.append(f"HIGHEST MARKETS in {where} on {latest_date}: " + "; ".join(f"{m['market']} ({m['district']}) Rs {m['modal']:.0f}" for m in top))
 
-    card = {"type": "prices", "title": f"{commodity} - mandi prices, {where}", "unit": "Rs/quintal", "series": series, "markets": (near + [m for m in top if m not in near])[:5], "signal": sig, "position": position}
-    return ToolResult("\n".join(lines), True, sources, [card], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": sig, "commodity": commodity, "position": position})
+    card = {"type": "prices", "title": f"{commodity} - mandi prices, {where}", "unit": "Rs/quintal", "series": series, "markets": (own + [m for m in near if m not in own] + [m for m in top if m not in own and m not in near])[:5], "signal": sig, "position": position, "own_market": own}
+    return ToolResult("\n".join(lines), True, sources, [card], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": sig, "commodity": commodity, "position": position, "own_market": own})
 
 
 def _num(v):

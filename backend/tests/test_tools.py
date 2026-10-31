@@ -20,7 +20,7 @@ def forecast(n=7, rain=None):
             "temperature_2m_max": [33.0] * n, "temperature_2m_min": [20.0] * n, "precipitation_sum": rain,
             "precipitation_probability_max": [10] * n, "wind_speed_10m_max": [9.0] * n, "et0_fao_evapotranspiration": [4.0] * n,
         },
-        "hourly": {"soil_moisture_3_to_9cm": [0.21] * 48},
+        "hourly": {"soil_moisture_3_to_9cm": [0.21] * 48, "soil_moisture_9_to_27cm": [0.30] * 48, "soil_moisture_27_to_81cm": [None] * 48, "soil_temperature_6cm": [29.94] * 48},
     }
 
 
@@ -471,7 +471,7 @@ def test_a_half_filled_today_is_left_out_and_the_last_complete_day_is_used():
 
     install(routes)
     r = mandi_mod.mandi("", {"place": "Nashik, Maharashtra", "crop": "Onion"})
-    assert r.ok and "only 1 market(s) have reported" in r.text and "latest COMPLETE day" in r.text
+    assert r.ok and "only 1 price report(s) have come in" in r.text and "latest COMPLETE day" in r.text
     assert f"{(today).isoformat()}: Rs 2900" not in r.text  # the one-market average is not shown as a price
     assert r.facts["price"]["latest_date"] == (today - dt.timedelta(days=1)).isoformat()
     assert "Rs 2900" not in r.text.split("NOTE:")[-1]  # nor used for the highest-market or position lines
@@ -517,3 +517,75 @@ def test_devanagari_district_names_the_geocoder_lacks_are_mapped_to_english_name
     for typed, searched in [("सातारा", "Satara"), ("सांगली, महाराष्ट्र", "Sangli"), ("इंदौर", "Indore")]:
         loc_mod.resolve_location({"place": typed})
         assert asked[-1] == (searched, "en")  # searched under the English name, in English
+
+
+def test_own_markets_are_the_markets_whose_name_matches_the_farmers_place():
+    rows = [
+        {"market": "Pune(Moshi)", "district": "Pune", "modal": 600.0, "min": 500.0, "max": 700.0},
+        {"market": "Pune(Manjri)", "district": "Pune", "modal": 1000.0, "min": 800.0, "max": 1200.0},
+        {"market": "APMC Khed", "district": "Pune", "modal": 1000.0, "min": 900.0, "max": 1100.0},
+    ]
+    assert [m["market"] for m in mandi_mod.own_markets(rows, ["Pune", "Pune"])] == ["Pune(Manjri)", "Pune(Moshi)"]  # both Pune markets, not Khed
+    assert mandi_mod.own_markets(rows, ["Maharashtra"]) == []
+    assert mandi_mod.own_markets(rows, ["Pen", ""]) == []  # too short to match safely
+
+
+def test_a_dropped_history_request_is_retried_once_so_the_trend_is_not_lost(monkeypatch):
+    calls = {"hist": 0}
+    monkeypatch.setattr(mandi_mod, "HISTORY_RETRY_DELAY_S", 0)
+
+    def flaky(url, params):
+        if "filters[State]" in params:  # the history resource uses Title-case filters
+            calls["hist"] += 1
+            if calls["hist"] == 1:
+                raise SourceUnavailable("dropped")
+            today = dt.date.today()
+            return {"records": mandi_records({(today - dt.timedelta(days=7)).strftime("%d/%m/%Y"): [2000] * 6}), "total": 6}
+        return routes_ok(url, params)
+
+    install(flaky)
+    r = mandi_mod.mandi("", {"place": "Nashik, Maharashtra", "crop": "Onion"})
+    assert calls["hist"] >= 2 and r.ok and "SIGNAL (computed in code)" in r.text
+
+
+def test_soil_profile_reports_each_depth_the_model_returned_and_never_invents_one():
+    install(routes_ok)
+    r = weather_mod.weather("", {"place": "Nashik, Maharashtra"})
+    assert "SOIL MOISTURE 3-9 cm" in r.text and "SOIL MOISTURE DEEPER (root zone, model estimate, next-24h average): 9-27 cm 0.3 m3/m3." in r.text
+    assert "27-81" not in r.text and "SOIL TEMPERATURE (model estimate, next-24h average): 6 cm 29.9 C" in r.text and "18 cm" not in r.text  # missing layers are left out
+    assert r.facts["soil_profile"] == {"moisture_3_9cm": 0.21, "moisture_9_27cm": 0.3, "temp_6cm_c": 29.9}
+
+
+def test_an_empty_answer_is_asked_again_uncached_before_saying_there_is_no_data(monkeypatch):
+    monkeypatch.setattr(mandi_mod, "HISTORY_RETRY_DELAY_S", 0)
+    calls = {"n": 0}
+
+    def blip(url, params):
+        if "data.gov.in" in url and "filters[state]" in params:
+            calls["n"] += 1
+            return {"records": []} if calls["n"] == 1 else routes_ok(url, params)
+        return routes_ok(url, params) if "filters[State]" not in params else {"records": []}
+
+    install(blip)
+    r = mandi_mod.mandi("", {"place": "Nashik, Maharashtra", "crop": "Onion"})
+    assert calls["n"] == 2 and "no published records" not in r.text and "MANDI PRICES for Onion" in r.text
+
+
+def test_empty_record_lists_are_cached_only_briefly_but_real_data_keeps_the_normal_ttl(monkeypatch):
+    from app.tools import http
+
+    http._cache.clear()
+    class R:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+    class C:
+        def __init__(self): self.data = {"records": []}
+        def get(self, *a, **k): return R(self.data)
+    c = C()
+    monkeypatch.setattr(http, "_client", c)
+    http.get_json("https://api.data.gov.in/resource/x", {"a": 1}, ttl=1800)
+    assert next(iter(http._cache.values()))[2] == http.EMPTY_TTL_S
+    http._cache.clear(); c.data = {"records": [{"x": 1}]}
+    http.get_json("https://api.data.gov.in/resource/x", {"a": 1}, ttl=1800)
+    assert next(iter(http._cache.values()))[2] is None

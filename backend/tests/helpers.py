@@ -23,13 +23,13 @@ class StubStore:
 class FakeLLM:
     """chat_json -> router; chat -> scripted answers (last repeats). off=True simulates provider outage."""
 
-    def __init__(self, answers=None, route="weather_advice", off=False):
-        self.answers, self.route, self.n, self.off, self.last_messages = answers or ["ok"], route, 0, off, None
+    def __init__(self, answers=None, route="weather_advice", off=False, place="", crop=""):
+        self.answers, self.route, self.n, self.off, self.last_messages, self.place, self.crop = answers or ["ok"], route, 0, off, None, place, crop
 
     def chat_json(self, msgs, **kw):
         if self.off:
             return None, LLMResult("", "offline", degraded=True)
-        return {"intent": self.route, "language": "en", "reason": "test"}, LLMResult("{}", "primary")
+        return {"intent": self.route, "language": "en", "place": self.place, "crop": self.crop, "reason": "test"}, LLMResult("{}", "primary")
 
     def chat(self, msgs, offline="", **kw):
         self.last_messages = msgs

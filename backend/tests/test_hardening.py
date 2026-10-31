@@ -38,7 +38,7 @@ class WeirdRouter(FakeLLM):
 def test_garbage_router_json_falls_back_to_keywords_without_crashing():
     for payload in ({"intent": ["a", "b"]}, {"intent": {"x": 1}}, {"intent": None}, [1, 2], "str", {"intent": "weather_advice", "language": ["hi"]}, {"intent": "weather_advice", "language": "xx-evil"}):
         o = Orchestrator(DOMAIN, WeirdRouter(payload, answers=["ok"]), StubStore())
-        intent, lang, _, _ = o._route("will it rain?", None)
+        intent, lang, _, _, _ = o._route("will it rain?", None)
         assert intent.name in {i.name for i in DOMAIN.intents} and lang in DOMAIN.languages, payload
 
 

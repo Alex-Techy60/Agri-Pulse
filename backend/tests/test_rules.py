@@ -292,3 +292,11 @@ def test_thousands_written_with_a_space_are_one_number_not_two():
         assert grounded_numbers()(ans, ctx) == [] and grounded_units()(ans, ctx) == []
     assert numbers_in("5 500") == {"5500"} and numbers_in("2026-11-02 100 mm") == {"2026", "11", "2", "100"}  # dates are never merged
     assert grounded_numbers()("Best Rs 5 600", ctx)  # a grouped number that is not in the data is still caught
+
+
+def test_per_market_gives_one_row_per_market_not_one_per_variety():
+    rows = [{"market": "A", "district": "Nashik", "modal": m, "min": lo, "max": hi} for m, lo, hi in ((3000, 2500, 3400), (3200, 2800, 3600), (3100, 2600, 3500))]
+    rows += [{"market": "B", "district": "Nashik", "modal": 4000, "min": 3500, "max": 4400}, {"market": "A", "district": "Pune", "modal": 9000, "min": None, "max": None}]
+    out = {(r["market"], r["district"]): r for r in pr.per_market(rows)}
+    assert len(out) == 3 and out[("A", "Nashik")]["modal"] == 3100 and out[("A", "Nashik")]["min"] == 2500 and out[("A", "Nashik")]["max"] == 3600 and out[("A", "Nashik")]["varieties"] == 3
+    assert pr.market_position(pr.per_market(rows * 1), "Nashik")["markets"] == 3  # counts markets, not rows

@@ -78,6 +78,21 @@ def _drop_outliers(vals: list[float]) -> list[float]:
     return [v for v in vals if med / OUTLIER_FACTOR < v < med * OUTLIER_FACTOR]
 
 
+def per_market(rows: list[dict]) -> list[dict]:
+    """One row per market: Agmarknet reports one row per variety/grade, so a market with four varieties would count four times
+    in a median or a "49 markets" figure. Modal price = median over the market's rows, min = lowest min, max = highest max."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        if r.get("modal"):
+            groups.setdefault((" ".join(str(r.get("market") or "").split()), norm_name(r.get("district"))), []).append(r)
+    out = []
+    for g in groups.values():
+        mins, maxs = [x["min"] for x in g if x.get("min")], [x["max"] for x in g if x.get("max")]
+        out.append({"market": " ".join(str(g[0].get("market") or "").split()), "district": g[0].get("district"), "modal": _median([x["modal"] for x in g]),
+                    "min": min(mins) if mins else None, "max": max(maxs) if maxs else None, "varieties": len(g)})
+    return out
+
+
 def clean_rows(rows: list[dict]) -> list[dict]:
     """Same outlier rule as build_series, for per-market rows (all one commodity): drops entries 10x away from the median
     (typos or unit slips). NOTE: the fetch layer already removes other commodities that the API's loose filter returns."""

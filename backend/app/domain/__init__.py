@@ -45,6 +45,10 @@ class Domain:
     safe_fallback_by_lang: dict[str, str] = field(default_factory=dict)  # same text as safe_fallback, in the farmer's language
     stt_prompts: dict[str, str] = field(default_factory=dict)  # speech-to-text vocabulary hint per language (words a farmer says)
     suggested_prompts_by_lang: dict[str, list[str]] = field(default_factory=dict)  # same questions in the farmer's language; others fall back to English
+    # (profile, {place, crop} the router found in the question, question) -> profile values the QUESTION overrides for this turn
+    soft_validators: list[Validator] = field(default_factory=list)  # style rules: one rewrite is asked for, then the draft is delivered anyway
+    label_text: dict[str, dict[str, str]] = field(default_factory=dict)  # language -> {RULE_LABEL: phrase in that language}
+    question_overrides: Callable[[dict, dict, str], dict] | None = None
 
 
 def load_domain() -> Domain:

@@ -1,6 +1,9 @@
 """Place name -> lat/lon/state/district via Open-Meteo's free geocoding API (live, no key)."""
 from __future__ import annotations
 
+import difflib
+import unicodedata
+
 from app.tools import NeedsInput, PlaceNotFound
 from app.tools.http import get_json
 
@@ -45,6 +48,11 @@ GEO_NAMES = {
     "ahmednagar": "Ahilyanagar", "panaji": "Panjim", "bangalore": "Bengaluru", "allahabad": "Prayagraj", "gurgaon": "Gurugram",
     # District names the geocoder does not list (checked live 31 Oct 2026): the district's own town, or the old name.
     "buldhana": "Buldana", "raigad": "Alibag", "chhatrapati sambhajinagar": "Aurangabad", "sambhajinagar": "Aurangabad",
+    # Old and alternate spellings. Without these the geocoder returned a village ("Nasik" -> Vani, "Banaras" -> a Chhattisgarh
+    # hamlet), an airport ("Belgaum", "Cochin", "Trivandrum") or nothing ("Gulbarga", "Shimoga"). Each target checked live.
+    "nasik": "Nashik", "banaras": "Varanasi", "benares": "Varanasi", "gulbarga": "Kalaburagi", "shimoga": "Shivamogga", "bombay": "Mumbai",
+    "calcutta": "Kolkata", "madras": "Chennai", "belgaum": "Belagavi", "trivandrum": "Thiruvananthapuram", "cochin": "Kochi",
+    "mysore": "Mysuru", "mangalore": "Mangaluru",
 }
 
 
@@ -72,6 +80,23 @@ def _district_hints(rest: list[str]) -> list[str]:
         if words:
             hints.append(" ".join(words))
     return hints
+
+
+def _ascii(t: str) -> str:
+    return unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode().lower().strip()
+
+
+def _name_match(query: str, r: dict) -> float:
+    """How much the geocoder's result looks like what the farmer typed (1.0 = same word). The typed name may be the whole name,
+    a word inside it ("Sindhudurg" in "Sindhudurg Airport") or the result's district ("Belgaum" -> district "Belgaum")."""
+    q, name = _ascii(query), _ascii(r.get("name"))
+    district = _ascii(r.get("admin2")).replace("district", "").strip()
+    if q and (q in name.split() or q == district):
+        return 1.0
+    return difflib.SequenceMatcher(None, q, name).ratio()
+
+
+MIN_NAME_MATCH = 0.75  # "Nasik" vs "Nashik" is 0.91; "Nasik" vs "Vani" is 0.0
 
 
 def _score(r: dict, rest: list[str]) -> int:
@@ -110,6 +135,12 @@ def resolve_location(profile: dict) -> dict:
     # The geocoder orders by name match, not importance: "Panaji" returns a Gujarat village before Goa's capital and
     # "Ahmednagar" a Gujarat town before the Maharashtra city. Rank by state/district hint first, then by population.
     best = max(results, key=lambda r: (_score(r, rest), r.get("population") or 0))
+    if _search_langs(query) == ["en"] and _name_match(query, best) < MIN_NAME_MATCH:
+        # The top hit is not what was typed ("Nasik" -> a village called Vani). Prefer a result that is named like the query.
+        named = [r for r in results if _name_match(query, r) >= MIN_NAME_MATCH]
+        if not named:
+            raise PlaceNotFound(f"{parts[0]}: the place finder only matched it to '{best.get('name')}', which is a different name; ask for the nearest bigger town or the district name")
+        best = max(named, key=lambda r: (_score(r, rest), r.get("population") or 0))
     wanted = [t for t in rest if t in INDIA_STATES]
     if wanted and not any(w in (best.get("admin1") or "").lower() for w in wanted):
         raise PlaceNotFound(f"{parts[0]} in {', '.join(wanted)}: the place finder has no match there; ask for the nearest bigger town or the district name")
