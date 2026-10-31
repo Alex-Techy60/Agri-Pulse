@@ -234,7 +234,7 @@ DOMAIN = Domain(
         # The model's own reasoning or a mention of its instructions must never be delivered as an answer (seen on 31 Oct 2026 from the
         # fallback model: "The user is asking... I need to follow the rules strictly...").
         forbid_patterns({
-            r"\bCONTEXT\b|\bthe\s+user\s+(?:is\s+asking|asks|wants|said)\b|\bI\s+(?:need|must|should)\s+(?:to\s+)?(?:follow|state|lead\s+with|cite|check\s+the)\b|\bthe\s+(?:rules|guidance|instructions)\s+(?:say|says|state|states)\b|\bthe\s+DECISION\s+(?:says|is)\b": "Shows the assistant's own reasoning or instructions. Write only the answer for the farmer.",
+            r"(?-i:\bCONTEXT\b)|\bthe\s+user\s+(?:is\s+asking|asks|wants|said)\b|\bI\s+(?:need|must)\s+(?:to\s+)?(?:follow|lead\s+with|cite)\b|\bthe\s+(?:instructions|guidance)\s+(?:say|says|state|states)\b|(?-i:\bthe\s+DECISION\s+(?:says|is)\b)": "Shows the assistant's own reasoning or instructions. Write only the answer for the farmer.",
         }),
         forbid_patterns({BRAND_PATTERN: "Do not mention pesticide brand names.", RATE_PATTERN: "Do not recommend pesticide or fertiliser application rates."}),
         forbid_patterns({r"IMAGE\s+(ASSESSMENT|ANALYSIS)": "Do not mention internal labels. Say 'from your photo' instead."}),

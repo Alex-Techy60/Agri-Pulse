@@ -100,3 +100,24 @@ def test_soil_figures_must_be_called_a_model_estimate():
     assert not run_all(ALL, "Your soil pH is 7 (a 250 m model estimate, ISRIC SoilGrids), heavy clay. Get a soil test.", ctx)
     assert not run_all(ALL, "मिट्टी का pH 7 है, यह अनुमान है; मिट्टी की जांच कराएं।", ctx)
     assert not run_all(ALL, "Wheat sowing is fine.", ctx)  # no soil figure, nothing to qualify
+
+
+@pytest.mark.parametrize("leak", [
+    "The user is asking whether to sell wheat now. I need to follow the rules strictly.",
+    "The CONTEXT provides MANDI PRICES, WEATHER, DECISION, etc.",
+    "Also: the guidance says to lead with the YOUR MARKET line.",
+    "I need to lead with the price, then the weather.",
+])
+def test_the_models_own_reasoning_is_never_delivered_as_an_answer(leak):
+    assert run_all(DOMAIN.validators, leak, "x"), leak  # a HARD rule: the hard list alone must catch it
+
+
+@pytest.mark.parametrize("fine", [
+    "The decision is neutral: prices are steady (data.gov.in Agmarknet, 2026-10-30).",
+    "In this context, onion prices moved 3.7 % (data.gov.in Agmarknet, 2026-10-30).",
+    "The rule says neither a sell nor a hold, because the change is under 5 %.",
+    "According to the context of the last week, rain is 12.8 mm (Open-Meteo).",
+])
+def test_ordinary_sentences_about_the_decision_or_the_rule_are_not_mistaken_for_leaks(fine):
+    ctx = "MANDI PRICES WEATHER 3.7 % 5 % 12.8 mm 2026-10-30 Rs"
+    assert not [v for v in run_all(DOMAIN.validators, fine, ctx) if "reasoning" in v], fine
