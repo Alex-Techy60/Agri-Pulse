@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     mandi_days: int = 10  # history window: must reach the day the 7-day trend compares with (5-9 days back)
     cache_ttl_s: float = 900.0  # live-data cache (stale real data is shown labelled if the source is down)
     tool_timeout_s: float = 8.0
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = ""  # comma-separated deployed origins (e.g. https://kisaanmitra.onrender.com); localhost is always allowed via regex in main.py
     ingest_api_key: str = ""  # empty = /api/ingest disabled; set to enable (send as X-Admin-Key)
     rate_limit_per_min: int = 20  # chat requests per client+session per minute (0 = off)
 

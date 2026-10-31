@@ -27,7 +27,7 @@ from app.core.config import get_settings
 from app.decision import price_rules as pr
 from app.tools.http import get_json
 
-API = "https://api.data.gov.in/resource/35985678-0d79-46b4-9ed6-6f13308a1d24"
+API = "https://api.data.gov.in/resource/{rid}"  # rid filled from settings.mandi_history_resource_id
 PAGE, PAUSE_S = 500, 3.0
 DEFAULT = ["Maharashtra/Onion", "Maharashtra/Tomato", "Maharashtra/Potato", "Karnataka/Onion", "Karnataka/Tomato", "Punjab/Potato"]
 HORIZON, TOL = 7, 1.0
@@ -35,10 +35,11 @@ HORIZON, TOL = 7, 1.0
 
 def download(state: str, commodity: str, days: int) -> list[dict]:
     oldest, out = dt.date.today() - dt.timedelta(days=days), []
+    url = API.format(rid=get_settings().mandi_history_resource_id)
     for page in range(120):
         params = {"api-key": get_settings().data_gov_api_key, "format": "json", "limit": PAGE, "offset": page * PAGE,
                   "filters[State]": state, "filters[Commodity]": commodity, "sort[Arrival_Date]": "desc"}
-        recs = (get_json(API, params, ttl=0, timeout=30).data or {}).get("records") or []
+        recs = (get_json(url, params, ttl=0, timeout=30).data or {}).get("records") or []
         rows = [{str(k).lower(): v for k, v in r.items()} for r in recs]
         out += [{"d": (pr.parse_date(r["arrival_date"]) or dt.date.min).isoformat(), "m": r.get("market"), "p": pr.to_float(r.get("modal_price"))}
                 for r in rows if " ".join(str(r.get("commodity", "")).lower().split()) == commodity.lower()]

@@ -33,7 +33,11 @@ s = get_settings()
 app = FastAPI(title=s.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
+    # Explicit origins from CORS_ORIGINS env var (for deployed URLs).
+    # allow_origin_regex covers every localhost port automatically so the app
+    # works on any machine regardless of which port Vite picks (5173-5179…).
     allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
