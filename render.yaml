@@ -31,3 +31,5 @@ services:
         sync: false
       - key: MANDI_FILTER_STYLE
         value: lower
+      - key: CORS_ORIGINS
+        value: https://kisaanmitra-fcfm.onrender.com
