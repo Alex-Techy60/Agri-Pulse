@@ -191,3 +191,18 @@ def test_devanagari_language_marathi_vs_hindi_is_decided_by_words_only_one_has()
     assert devanagari_lang("क्या मैं अपना गेहूं अभी बेचूं?") == "hi" and devanagari_lang("आज प्याज का भाव क्या है और क्या मुझे बेचना चाहिए?") == "hi"
     assert devanagari_lang("कांदा") is None and devanagari_lang("price") is None
     assert script_lang("आज कांद्याचा भाव काय आहे?") == "mr" and script_lang("कांदा") == "hi" and script_lang("hello") == "en"
+
+
+def test_hinglish_typed_in_roman_letters_is_answered_in_roman_letters_unless_a_language_was_chosen():
+    from app.agents.orchestrator import Orchestrator, is_romanised
+    from tests.helpers import FakeLLM, StubStore
+
+    assert is_romanised("pyaz ka bhav kya hai", None, "hi") and is_romanised("kanda vikau ka", None, "mr")
+    assert not is_romanised("pyaz ka bhav kya hai", "hi", "hi")  # the UI language is chosen: respect it
+    assert not is_romanised("what is the price", None, "en") and not is_romanised("प्याज का भाव", None, "hi") and not is_romanised("123", None, "hi")
+    llm = FakeLLM(["ok"])
+    llm.route = "weather_advice"
+    o = Orchestrator(domain(["good"]), llm, StubStore())
+    msgs = o._build_messages(o.domain.intents[0], "hi", "ctx", "", "default", "baarish hogi kya", roman=True)
+    assert "written in Roman letters" in msgs[0]["content"] and "do not use Devanagari" in msgs[0]["content"]
+    assert "Roman letters" not in o._build_messages(o.domain.intents[0], "hi", "ctx", "", "default", "x")[0]["content"]

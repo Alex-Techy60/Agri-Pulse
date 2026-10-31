@@ -31,6 +31,16 @@ _NEGATION = re.compile(
     r"|(?<![\u0900-\u097f])(?:\u0928\u0939\u0940\u0902|\u0928\u0939\u0940|\u0928\u093e\u0939\u0940|\u0928\u0915\u094b|\u092c\u093f\u0928\u093e|\u0936\u093f\u0935\u093e\u092f|\u0915\u092d\u0940 \u0928\u0939\u0940\u0902)(?![\u0900-\u097f])",
     re.I,
 )
+# Negations in Tamil, Telugu, Kannada, Bengali, Gujarati, Punjabi and Malayalam (plain substrings: these scripts have no word-boundary class here).
+_NEGATION_OTHER = re.compile("|".join([
+    "\u0b87\u0bb2\u0bcd\u0bb2\u0bc8", "\u0bae\u0bc1\u0b9f\u0bbf\u0baf\u0bbe\u0ba4\u0bc1", "\u0b85\u0bb2\u0bcd\u0bb2",  # ta: illai, mudiyathu, alla
+    "\u0c32\u0c47\u0c26\u0c41", "\u0c15\u0c3e\u0c26\u0c41", "\u0c07\u0c35\u0c4d\u0c35\u0c32\u0c47\u0c28\u0c41",  # te: ledu, kadu, ivvalenu
+    "\u0c87\u0cb2\u0ccd\u0cb2", "\u0cb8\u0cbe\u0ca7\u0ccd\u0caf\u0cb5\u0cbf\u0cb2\u0ccd\u0cb2",  # kn: illa, saadhyavilla
+    "\u09a8\u09c7\u0987", "\u09a8\u09be\u0983?(?![\u0980-\u09ff])",  # bn: nei, na
+    "\u0aa8\u0aa5\u0ac0",  # gu: nathi
+    "\u0a28\u0a39\u0a40\u0a02", "\u0a28\u0a39\u0a40",  # pa: nahin
+    "\u0d07\u0d32\u0d4d\u0d32", "\u0d15\u0d34\u0d3f\u0d2f\u0d3f\u0d32\u0d4d\u0d32",  # ml: illa, kazhiyilla
+]))
 _CLAUSE_END = r"[.!?;\n\u0964]"  # \u0964 = danda, the Hindi/Marathi full stop
 
 
@@ -47,7 +57,7 @@ def forbid_unless_negated(rules: dict[str, str], window: int = 30, after: int = 
                 clause = re.split(_CLAUSE_END, text[max(0, m.start() - window):m.start()])[-1]
                 if after:
                     clause += " " + re.split(_CLAUSE_END, text[m.end():m.end() + after])[0]
-                if not _NEGATION.search(clause):
+                if not _NEGATION.search(clause) and not _NEGATION_OTHER.search(clause):
                     out.append(msg)
                     break
         return out

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 import unicodedata
 
 from app.tools import NeedsInput, PlaceNotFound
@@ -70,6 +71,34 @@ NATIVE_PLACES = {
 }
 
 
+NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
+# Villages and hamlets are too ambiguous across states for a name alone ("कळवण" -> hamlets in Rajasthan, not Kalwan in Nashik), so the
+# fallback accepts only towns, cities and administrative areas, and a typed state must match.
+FALLBACK_TYPES = {"town", "city", "administrative", "suburb", "municipality"}
+_ADMIN_WORD = re.compile(r"\s+(taluka|tehsil|tahsil|subdistrict|sub-district|district|mandal|block|urban)$", re.I)
+
+
+def clean_admin_name(name: str | None) -> str:
+    return _ADMIN_WORD.sub("", (name or "").strip()).strip()
+
+
+def _nominatim_fallback(query: str, rest: list[str]) -> dict | None:
+    """Second place finder for Devanagari names Open-Meteo does not know (OpenStreetMap carries the Marathi/Hindi name)."""
+    f = get_json(NOMINATIM_SEARCH, {"q": query, "countrycodes": "in", "format": "jsonv2", "addressdetails": 1, "accept-language": "en", "limit": 5}, ttl=86400)
+    found = f.data if isinstance(f.data, list) else []
+    cands = [x for x in found if x.get("type") in FALLBACK_TYPES and (x.get("address") or {}).get("country_code") == "in"]
+    wanted = [t for t in rest if t in INDIA_STATES]
+    if wanted:
+        cands = [x for x in cands if any(w in (x["address"].get("state") or "").lower() for w in wanted)]
+    if not cands:
+        return None
+    best = max(cands, key=lambda x: x.get("importance") or 0)
+    a = best["address"]
+    return {"name": clean_admin_name(best.get("name")) or query, "state": a.get("state", ""), "district": clean_admin_name(a.get("state_district") or a.get("county")),
+            "lat": float(best["lat"]), "lon": float(best["lon"]),
+            "source": {"name": "OpenStreetMap Nominatim", "url": f.url, "fetched_at": f.fetched_at, "stale": f.stale}}
+
+
 def _district_hints(rest: list[str]) -> list[str]:
     """Typed parts that are neither a state nor filler: the district/town the farmer named."""
     hints = []
@@ -128,6 +157,10 @@ def resolve_location(profile: dict) -> dict:
         if results:
             break
     if not results:
+        if _search_langs(query) != ["en"]:  # a Devanagari (or other native-script) name the first finder lacks
+            alt = _nominatim_fallback(query, [p.lower() for p in parts[1:]])
+            if alt:
+                return alt
         raise PlaceNotFound(place)
     rest = [p.lower() for p in parts[1:]]
     if parts[0] in NATIVE_PLACES:  # searched under the English name: a Devanagari state/district hint cannot match English records

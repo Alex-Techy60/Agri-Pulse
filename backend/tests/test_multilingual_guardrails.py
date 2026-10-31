@@ -37,3 +37,31 @@ def test_unsafe_hindi_and_marathi_answers_are_rejected(bad):
 ])
 def test_refusals_and_plain_advice_are_left_alone(good):
     assert not flagged(good), good
+
+
+@pytest.mark.parametrize("bad", [
+    "இப்போது விற்றால் உத்தரவாதம் உண்டு, லாபம் நிச்சயம்.",  # ta
+    "ఇప్పుడు అమ్మితే లాభం హామీ.",  # te
+    "ಈಗ ಮಾರಿದರೆ ಗ್ಯಾರಂಟಿ ಲಾಭ.",  # kn
+    "এখন বিক্রি করলে লাভের গ্যারান্টি আছে।",  # bn
+    "હવે વેચવાથી નફાની ગેરંટી છે.",  # gu
+    "ਹੁਣ ਵੇਚਣ ਨਾਲ ਮੁਨਾਫ਼ੇ ਦੀ ਗਾਰੰਟੀ ਹੈ।",  # pa
+    "ഇപ്പോൾ വിറ്റാൽ ലാഭത്തിന് ഗ്യാരണ്ടി ഉണ്ട്.",  # ml
+])
+def test_guarantees_in_the_other_languages_are_rejected(bad):
+    assert flagged(bad), bad
+
+
+@pytest.mark.parametrize("good", [
+    "லாபத்திற்கு உத்தரவாதம் இல்லை; இது முடிவு உதவி மட்டுமே.",  # ta: no guarantee
+    "లాభానికి హామీ ఇవ్వలేను; ఇది కేవలం సహాయం.",  # te
+    "ಲಾಭಕ್ಕೆ ಗ್ಯಾರಂಟಿ ಇಲ್ಲ.",  # kn
+    "লাভের গ্যারান্টি নেই; এটি কেবল সহায়তা।",  # bn
+    "નફાની ગેરંટી નથી.",  # gu
+    "ਮੁਨਾਫ਼ੇ ਦੀ ਗਾਰੰਟੀ ਨਹੀਂ ਹੈ।",  # pa
+    "ലാഭത്തിന് ഗ്യാരണ്ടി ഇല്ല.",  # ml
+    "உங்கள் வயல் நிலையை உறுதி செய்யுங்கள்.",  # ta: "make sure of your field condition" is everyday speech, not a guarantee
+    "તમારા ખેતરની ખાતરી કરો.",  # gu: "make sure", everyday speech
+])
+def test_refusals_and_everyday_make_sure_phrases_are_left_alone(good):
+    assert not flagged(good), good

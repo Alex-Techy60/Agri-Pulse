@@ -51,6 +51,12 @@ def devanagari_lang(text: str) -> str | None:
     return "mr" if mr and not hi else "hi" if hi and not mr else None
 
 
+def is_romanised(text: str, chosen_language: str | None, lang: str) -> bool:
+    """Hindi or Marathi typed in Roman letters ("pyaz ka bhav kya hai"): answer in Roman letters too. Only when the farmer did not
+    pick a language in the UI (a chosen language is respected) and the message has no native script at all."""
+    return chosen_language is None and lang in ("hi", "mr") and script_lang(text or "") == "en" and any(c.isalpha() for c in (text or ""))
+
+
 def script_lang(text: str) -> str:
     counts: dict[str, int] = {}
     for ch in text:
@@ -307,7 +313,8 @@ class Orchestrator:
         memory_ctx = "\n".join(h.text for h in mem)
 
         # 5) Specialist + guardrail loop -----------------------------------------
-        messages = self._build_messages(intent, lang, context, memory_ctx, session_id, text)
+        roman = is_romanised(text, language, lang)
+        messages = self._build_messages(intent, lang, context, memory_ctx, session_id, text, roman)
         check_ctx = context  # user-typed numbers are NOT grounding: "the price is Rs 5000" must not become a fact
         answer, warnings = "", []
         for attempt in range(self.s.max_self_corrections + 1):
@@ -347,7 +354,7 @@ class Orchestrator:
             answer = self.domain.safe_fallback_by_lang.get(lang, self.domain.safe_fallback)
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
 
-        answer = plain_text(answer, self.domain.label_text.get(lang))
+        answer = plain_text(answer, None if roman else self.domain.label_text.get(lang))
 
         # 6) Remember --------------------------------------------------------------
         if session_id != "default":
@@ -398,10 +405,10 @@ class Orchestrator:
                 best, score = i, sc
         return best, language or script_lang(text), "keyword fallback", True, {}
 
-    def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str) -> list[dict]:
+    def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str, roman: bool = False) -> list[dict]:
         system = (
             f"{self.domain.persona}\n\nTask guidance: {intent.instructions}\n"
-            f"Reply in {LANG_NAMES.get(lang, lang)}. Plain text only, no markdown symbols (the reply may be read aloud). Write numbers with digits.\n\n"
+            f"Reply in {LANG_NAMES.get(lang, lang)}" + (", written in Roman letters (Hinglish style) because the farmer wrote in Roman letters; do not use Devanagari" if roman else "") + f". Plain text only, no markdown symbols (the reply may be read aloud). Write numbers with digits.\n\n"
             f"CONTEXT:\n{context}\n" + (f"\nWHAT YOU REMEMBER ABOUT THIS USER:\n{memory_ctx}\n" if memory_ctx else "")
         )
         with self._lock:

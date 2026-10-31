@@ -38,3 +38,35 @@ def test_a_place_that_only_matches_something_else_is_refused_not_guessed(monkeyp
 def test_legitimate_variants_are_still_accepted(monkeypatch, typed, hit):
     monkeypatch.setattr(loc, "get_json", geo({typed: [hit]}))
     assert loc.resolve_location({"place": typed})["lat"] == 19.9
+
+
+def nominatim(results):
+    def fake(url, params=None, ttl=None, timeout=None):
+        if "geocoding" in url:
+            return Fetched({"results": []}, url, "t", False, 0)
+        return Fetched(results, url, "t", False, 0)
+    return fake
+
+
+def hit(name, type_, state, district, lat="19.9", lon="74.4", imp=0.16):
+    return {"name": name, "type": type_, "importance": imp, "lat": lat, "lon": lon, "address": {"country_code": "in", "state": state, "state_district": district}}
+
+
+def test_a_devanagari_town_the_first_finder_lacks_is_found_by_the_second(monkeypatch):
+    monkeypatch.setattr(loc, "get_json", nominatim([hit("Manmad", "town", "Maharashtra", "Nashik District")]))
+    r = loc.resolve_location({"place": "मनमाड"})
+    assert (r["name"], r["district"], r["state"]) == ("Manmad", "Nashik", "Maharashtra") and r["source"]["name"] == "OpenStreetMap Nominatim"
+
+
+def test_the_second_finder_never_accepts_a_village_or_another_state_than_the_one_typed(monkeypatch):
+    monkeypatch.setattr(loc, "get_json", nominatim([hit("Kalwana", "village", "Rajasthan", "Udaipur")]))
+    with pytest.raises(PlaceNotFound):
+        loc.resolve_location({"place": "कळवण"})  # only a hamlet in another state: ask for a nearer town instead
+    monkeypatch.setattr(loc, "get_json", nominatim([hit("Kalwan", "town", "Rajasthan", "Udaipur", imp=0.3), hit("Kalwan", "town", "Maharashtra", "Nashik District", imp=0.1)]))
+    assert loc.resolve_location({"place": "कळवण, Maharashtra"})["state"] == "Maharashtra"  # the typed state wins over importance
+
+
+def test_english_names_never_use_the_second_finder(monkeypatch):
+    monkeypatch.setattr(loc, "get_json", nominatim([hit("Manmad", "town", "Maharashtra", "Nashik District")]))
+    with pytest.raises(PlaceNotFound):
+        loc.resolve_location({"place": "Zzzzzz"})

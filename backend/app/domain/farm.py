@@ -181,6 +181,17 @@ DOMAIN = Domain(
         forbid_unless_negated({
             r"\u0917\u093e\u0930\u0902\u091f\u0940|\u0917\u0945\u0930\u0902\u091f\u0940|\u0917\u093e\u0930\u0923\u094d\u091f\u0940|\u0939\u092e\u0940|\u092a\u0915\u094d\u0915\u093e\s+(?:\u092e\u0941\u0928\u093e\u092b\u093e|\u092b\u093e\u092f\u0926\u093e|\u0932\u093e\u092d|\u0928\u092b\u093e)|\u0928\u093f\u0936\u094d\u091a\u093f\u0924(?:\s+\u0930\u0942\u092a\s+\u0938\u0947)?\s+(?:\u092e\u0941\u0928\u093e\u092b\u093e|\u0932\u093e\u092d|\u0928\u092b\u093e)|\u0928\u0915\u094d\u0915\u0940\s+(?:\u0928\u092b\u093e|\u092b\u093e\u092f\u0926\u093e)|\u0916\u093e\u0924\u094d\u0930\u0940\s+\u0906\u0939\u0947": "Makes a guarantee. Rephrase as decision support.",
         }, after=25),
+        # Other UI languages. Only words that mean "guarantee" and not the everyday "make sure" (Tamil \u0b89\u0bb1\u0bc1\u0ba4\u0bbf, Gujarati \u0a96\u0abe\u0aa4\u0ab0\u0ac0 are left out on purpose).
+        # Written by a non-native speaker: have them reviewed. The Latin brands, ungrounded numbers and doses are caught in every language.
+        forbid_unless_negated({
+            r"\u0b89\u0ba4\u0bcd\u0ba4\u0bb0\u0bb5\u0bbe\u0ba4\u0bae\u0bcd|\u0ba8\u0bbf\u0b9a\u0bcd\u0b9a\u0baf\u0bae\u0bbe\u0b95\s+\u0bb2\u0bbe\u0baa\u0bae\u0bcd": "Makes a guarantee. Rephrase as decision support.",  # ta
+            r"\u0c39\u0c3e\u0c2e\u0c40|\u0c17\u0c4d\u0c2f\u0c3e\u0c30\u0c02\u0c1f\u0c40": "Makes a guarantee. Rephrase as decision support.",  # te
+            r"\u0c97\u0ccd\u0caf\u0cbe\u0cb0\u0c82\u0c9f\u0cbf|\u0c96\u0cbe\u0ca4\u0cb0\u0cbf\u0caf\u0cbe\u0c97\u0cbf\s+\u0cb2\u0cbe\u0cad": "Makes a guarantee. Rephrase as decision support.",  # kn
+            r"\u0997\u09cd\u09af\u09be\u09b0\u09be\u09a8\u09cd\u099f\u09bf|\u09a8\u09bf\u09b6\u09cd\u099a\u09af\u09bc\u09a4\u09be": "Makes a guarantee. Rephrase as decision support.",  # bn
+            r"\u0a97\u0ac7\u0ab0\u0a82\u0a9f\u0ac0|\u0aa8\u0a95\u0acd\u0a95\u0ac0\s+\u0aa8\u0aab\u0acb": "Makes a guarantee. Rephrase as decision support.",  # gu
+            r"\u0a17\u0a3e\u0a30\u0a70\u0a1f\u0a40|\u0a2a\u0a71\u0a15\u0a3e\s+\u0a2e\u0a41\u0a28\u0a3e\u0a2b\u0a3c\u0a3e": "Makes a guarantee. Rephrase as decision support.",  # pa
+            r"\u0d17\u0d4d\u0d2f\u0d3e\u0d30\u0d23\u0d4d\u0d1f\u0d3f|\u0d09\u0d31\u0d2a\u0d4d\u0d2a\u0d4d\s+\u0d32\u0d3e\u0d2d\u0d02": "Makes a guarantee. Rephrase as decision support.",  # ml
+        }, after=25),
         forbid_patterns({
             r"ignore\s+(your|all|previous)\s+(rules|instructions|system)": "Repeats an instruction-override attempt.",
             r"you\s+are\s+now\s+(a|an)\s+": "Accepts a role change.",

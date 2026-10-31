@@ -6,19 +6,13 @@ tools use, so the place handed back is one they can resolve; when the village is
 Coordinates are used for this one lookup only: they are not stored and not logged."""
 from __future__ import annotations
 
-import re
-
 from app.tools import PlaceNotFound
 from app.tools.http import get_json
-from app.tools.location import resolve_location
+from app.tools.location import clean_admin_name, resolve_location
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 INDIA = (6.0, 38.0, 68.0, 98.5)  # lat_min, lat_max, lon_min, lon_max: a rough box, so a stray coordinate is not looked up
-_ADMIN_WORD = re.compile(r"\s+(taluka|tehsil|tahsil|subdistrict|sub-district|district|mandal|block|urban)$", re.I)
-
-
-def _clean(name: str | None) -> str:
-    return _ADMIN_WORD.sub("", (name or "").strip()).strip()
+_clean = clean_admin_name
 
 
 def locate(lat: float, lon: float) -> dict:
