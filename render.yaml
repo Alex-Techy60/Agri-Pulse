@@ -33,3 +33,15 @@ services:
         value: lower
       - key: CORS_ORIGINS
         value: https://kisaanmitra-fcfm.onrender.com
+      # Investment advisory: Govt-fixed fertilizer MRP (2025-26, PIB/MoAFW notification). Update if policy changes.
+      - key: FERTILIZER_MRP_UREA
+        value: "242"
+      - key: FERTILIZER_MRP_DAP
+        value: "1350"
+      - key: FERTILIZER_MRP_MOP
+        value: "1700"
+      - key: FERTILIZER_MRP_NPK
+        value: "1470"
+      # Optional: set FERTILIZER_RESOURCE_ID to a data.gov.in resource ID for live fertilizer prices
+      - key: FERTILIZER_RESOURCE_ID
+        value: ""

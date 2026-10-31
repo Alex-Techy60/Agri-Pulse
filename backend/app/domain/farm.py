@@ -14,6 +14,8 @@ from app.guardrails.validators import Validator, forbid_patterns, forbid_unless_
 from app.tools.crop_fit import crop_fit, table_key
 from app.tools.crop_stage import crop_stage
 from app.tools.location import FILLER
+from app.tools.agri_inputs import agri_inputs
+from app.tools.investment_check import investment_check
 from app.tools.mandi import ALIASES, cross, crop_key, crops_in_text, mandi
 from app.tools.rain_history import rain_history
 from app.tools.soil import soil
@@ -164,15 +166,30 @@ DOMAIN = Domain(
                "Answer ONLY from the official documents in CONTEXT (each starts with its title and date in square brackets). Name the document and its date. Quote amounts and dates exactly as written; in an MSP table the first number after the crop name is the MSP in Rs per quintal. Describe the published conditions and amounts; NEVER decide whether this farmer is eligible and never start an eligibility check or ask for personal or land details: say that the state agriculture office, the bank or the official scheme portal confirms eligibility and enrolment. If the documents do not cover the question, say plainly that you have no verified information on it and send the farmer to the local agriculture officer or KVK. Never invent enrolment dates, forms or phone numbers.",
                ["scheme", "subsidy", "msp", "support price", "pm kisan", "pm-kisan", "pmkisan", "insurance", "fasal bima", "pmfby", "eligib", "instalment", "installment", "योजना", "सब्सिडी", "समर्थन मूल्य", "एमएसपी", "फसल बीमा", "किसान सम्मान", "पीएम किसान", "हमीभाव", "योजने", "पीक विमा", "अनुदान", "पात्र", "किसान निधी"]),
         Intent("crop_health", "plant disease, pest, yellow or spotted leaves, a photo of a sick crop", "If CONTEXT has no IMAGE ASSESSMENT, you cannot see the plants: say so, ask the farmer to send a clear photo with the camera button or to describe the symptoms, and send them to the local KVK or agriculture officer; never say a data source is unreachable (none is involved) and never name a spray. Otherwise use the IMAGE ASSESSMENT in CONTEXT only. Describe the visible symptoms and possible causes in simple words, say it is a visual guess, and tell the farmer to show the plants to the local KVK or agriculture officer. No pesticide names, doses or rates.", ["disease", "pest", "leaf", "leaves", "yellow", "spot", "insect", "photo", "रोग", "कीट", "पत्ते", "पाने", "पान", "डाग", "धब्बे", "किडी", "फोटो", "bimari", "keeda", "daag", "patta", "patte"]),
-        Intent("general", "greeting or anything else", "You can only help with this farm's weather, rain, mandi prices, crop suitability, soil, when to sell, official scheme and support-price documents, and photos of sick crops. For anything else (loans, news, sports, or a scheme the documents in CONTEXT do not cover) say plainly that you have no verified information on it, point to the local agriculture officer or KVK, and invite a question about weather, prices or when to sell. Never start an eligibility check and never ask for personal or land details.", []),
+        Intent("investment_advice",
+               "how much will it cost to grow a crop, investment estimate, fertilizer cost, seed cost, expected profit, return on investment, should I plant this crop",
+               "Use ONLY the AGRI INPUTS and MANDI PRICES in CONTEXT. "
+               "State the INVESTMENT SIGNAL (FAVOURABLE / MARGINAL / UNFAVOURABLE) from CONTEXT first, then explain using the exact numbers given. "
+               "Always say these are estimates: actual yield, cost and mandi price will vary; the farmer should confirm costs with local vendors and KVK. "
+               "Cite every number with its source: fertilizer MRP = Govt-fixed MRP (PIB/MoAFW); yield range = ICAR Package of Practices; mandi price = data.gov.in Agmarknet with the date. "
+               "Never promise profit or guarantee yield. Never use a number not in CONTEXT. "
+               "If CONTEXT says SOURCE UNAVAILABLE or INSUFFICIENT_DATA for any component, say that clearly and do not estimate the missing part. "
+               "If CONTEXT has no mandi price (MANDI SOURCE UNAVAILABLE), say the return estimate cannot be made without a live price. "
+               "Present the cost breakdown (fertilizer, seed if available) and the revenue range (low yield and high yield scenario), then net profit range, then ROI range.",
+               ["invest", "cost", "profit", "return", "fertilizer cost", "seed cost", "how much to grow", "plant", "laga", "lagat",
+                "निवेश", "लागत", "खर्च", "मुनाफा", "लाभ", "बीज", "खाद", "उगाना", "लगाना",
+                "गुंतवणूक", "खर्च", "नफा", "बियाणे", "खत", "लागवड",
+                "how much does it cost", "is it profitable", "worth growing", "should I plant", "should I sow"]),
+        Intent("general", "greeting or anything else", "You can only help with this farm's weather, rain, mandi prices, crop suitability, soil, when to sell, official scheme and support-price documents, photos of sick crops, and investment estimates for growing a crop. For anything else (loans, news, sports, or a scheme the documents in CONTEXT do not cover) say plainly that you have no verified information on it, point to the local agriculture officer or KVK, and invite a question about weather, prices or when to sell. Never start an eligibility check and never ask for personal or land details.", []),
     ],
-    tools={"soil": soil, "crop_fit": crop_fit, "weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage},
+    tools={"soil": soil, "crop_fit": crop_fit, "weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage, "agri_inputs": agri_inputs, "investment_check": investment_check},
     intent_tools={
         "sell_or_hold": ["mandi", "weather"],
         "market_price": ["mandi"],
         "weather_advice": ["weather", "rain_history"],
         "sow_or_crop_care": ["weather", "rain_history", "crop_fit", "soil"],
         "crop_suggest": ["crop_fit", "weather", "soil"],
+        "investment_advice": ["mandi", "agri_inputs"],
     },
     label_text=LABEL_TEXT,
     retrieval_query=retrieval_query,
@@ -186,8 +203,10 @@ DOMAIN = Domain(
         "rain_history": "rain in the last 7/14/30 days vs next 7 days; dry-spell, irrigation-urgent and waterlogging alerts",
         "soil": "soil pH, texture and organic carbon around the place (ISRIC SoilGrids model estimate) and whether the farmer's crop tolerates them",
         "crop_fit": "which crops fit this place's climate now, best sowing windows for the farmer's crop, harvest window from a sowing date",
+        "agri_inputs": "fertilizer MRP, seed rate, ICAR-recommended input quantities and cost estimate per acre for the crop",
+        "investment_check": "ROI signal (FAVOURABLE / MARGINAL / UNFAVOURABLE) combining live mandi price with ICAR yield range and Govt-fixed fertilizer MRP",
     },
-    post_tools={"sell_or_hold": ["cross_check"], "weather_advice": ["crop_stage"], "sow_or_crop_care": ["crop_stage"]},
+    post_tools={"sell_or_hold": ["cross_check"], "weather_advice": ["crop_stage"], "sow_or_crop_care": ["crop_stage"], "investment_advice": ["investment_check"]},
     # HARD rules: safety and correctness. A draft that still breaks one after the rewrites is replaced by the safe answer.
     validators=[
         grounded_numbers(),  # every number in the answer must exist in tool output
@@ -279,14 +298,15 @@ DOMAIN = Domain(
         "mr": "कांदा, टोमॅटो, बटाटा, गहू, बाजारभाव, पाऊस, हवामान, फवारणी, सिंचन, विकू, नाशिक, येवला.",
     },
     suggested_prompts_by_lang={
-        "hi": ["क्या मुझे अपनी फसल अभी बेचनी चाहिए या रुकना चाहिए?", "क्या अगले कुछ दिनों में दवा छिड़कना सुरक्षित है?", "इस हफ्ते मेरे खेत के लिए मौसम का क्या जोखिम है?", "आज मेरी फसल का मंडी भाव क्या है?"],
-        "mr": ["मी माझे पीक आता विकू की थांबू?", "पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "या आठवड्यात माझ्या शेतासाठी हवामानाचा धोका काय आहे?", "आज माझ्या पिकाचा बाजारभाव काय आहे?"],
+        "hi": ["क्या मुझे अपनी फसल अभी बेचनी चाहिए या रुकना चाहिए?", "क्या अगले कुछ दिनों में दवा छिड़कना सुरक्षित है?", "इस हफ्ते मेरे खेत के लिए मौसम का क्या जोखिम है?", "आज मेरी फसल का मंडी भाव क्या है?", "प्रति एकड़ फसल उगाने में कितना खर्च आएगा?"],
+        "mr": ["मी माझे पीक आता विकू की थांबू?", "पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "या आठवड्यात माझ्या शेतासाठी हवामानाचा धोका काय आहे?", "आज माझ्या पिकाचा बाजारभाव काय आहे?", "एक एकर पीक लागवडीसाठी किती खर्च येतो?"],
     },
     suggested_prompts=[
         "Should I sell my crop now or wait?",
         "Is it safe to spray in the next few days?",
         "What is the weather risk for my farm this week?",
         "What is today's mandi price for my crop?",
+        "How much will it cost to grow my crop per acre?",
     ],
     languages={"en": "English", "hi": "हिन्दी", "mr": "मराठी", "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ", "ta": "தமிழ்", "te": "తెలుగు", "kn": "ಕನ್ನಡ", "bn": "বাংলা", "ml": "മലയാളം"},
     profile_fields=[
