@@ -276,3 +276,6 @@ textarea:focus-visible, input:focus-visible, select:focus-visible { outline-offs
 @media (prefers-reduced-motion: reduce) { .shimmer { color:var(--muted); background:none; } }
 .trace summary { display:block; text-transform:none; letter-spacing:0; font-weight:inherit; font-size:15px; }
 .trace summary em { float:right; }
+
+.trace li { display:flow-root; } /* a floated time must stay inside its own step, not slide onto the next one */
+.nonotice { border-color:var(--accent); } .nonotice p { margin:0; color:var(--text); }

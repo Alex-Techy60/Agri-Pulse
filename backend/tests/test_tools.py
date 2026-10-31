@@ -100,6 +100,8 @@ def test_mandi_no_records_says_so():
     install(lambda url, p: GEO if "geocoding" in url else {"records": []})
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
     assert r.ok and "no published records" in r.text and "do not estimate" in r.text
+    notice = [c for c in r.cards if c["type"] == "notice"]
+    assert len(notice) == 1 and notice[0]["kind"] == "no_prices" and notice[0]["crop"] and notice[0]["state"]  # visible next to the forecast, not only in the text
     assert "never say it is unreachable" in r.text  # the source answered: only the crop has no rows
 
 

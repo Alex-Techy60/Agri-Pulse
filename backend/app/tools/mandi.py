@@ -241,7 +241,10 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
             f"MANDI PRICES: no published records for {commodity} in {where} {span} "
             f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices, do not call prices neutral or steady, and give no sell or hold view."
             + (" The source answered normally and simply holds no records for this crop, so never say it is unreachable; suggest checking the crop name." if hist_complete else ""),
-            True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
+            True, sources,
+            # a card, so the gap is visible next to the forecast: the most important fact must not hide in folded text
+            [{"type": "notice", "kind": "no_prices", "crop": commodity, "state": where, "days": s.mandi_days, "complete": bool(hist_complete)}],
+            {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 
     sig = trend_signal(all_recs)

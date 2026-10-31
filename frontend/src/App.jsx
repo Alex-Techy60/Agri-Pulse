@@ -66,6 +66,7 @@ export default function App() {
   const [profile, setProfile] = useState(loadProfile);
   const [photo, setPhoto] = useState(null); // {b64, previewUrl, name}: already shrunk to 1024 px
   const [slow, setSlow] = useState(false);
+  const [aiDown, setAiDown] = useState(false); // "key configured" is not "AI answering": the badge follows the last real answer
   const [notice, setNotice] = useState("");
   const [rate, setRate] = useState(loadRate);
   const voices = useVoices();
@@ -138,6 +139,7 @@ export default function App() {
       const imageB64 = image?.b64;
       const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
       setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r, at: stamp(), id: r.message_id || undefined, feedback: null }]);
+      setAiDown(!!r.live_only);
       refreshChats();
       if (r.profile?.place) { const np = { ...profile, place: profile.place || r.profile.place }; setProfile(np); saveProfile(np); }
       if (speak) speakNow(r.answer, r.language || lang);
@@ -292,7 +294,7 @@ export default function App() {
             <option value={1}>{uiText(lang).normal}</option>
             <option value={1.25}>🐇 {uiText(lang).fast}</option>
           </select>
-          {health && <AnimatedBadge text={health.llm_configured ? "AI online" : "AI offline (live data only)"} color={health.llm_configured ? "#3ecf8e" : "#ff8a3d"} />}
+          {health && <AnimatedBadge text={!health.llm_configured ? "AI offline (live data only)" : aiDown ? uiText(lang).aiBusy : uiText(lang).aiOn} color={health.llm_configured && !aiDown ? "#3ecf8e" : "#ff8a3d"} />}
         </div>
       </header>
 

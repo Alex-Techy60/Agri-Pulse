@@ -205,7 +205,18 @@ function Soil({ c }) {
   );
 }
 
-const CARD_TYPES = { soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+function Notice({ c, lang }) {
+  const t = uiText(lang);
+  if (c.kind !== "no_prices" || !c.crop) return null; // an unknown notice kind renders nothing
+  return (
+    <div className="card nonotice" role="note">
+      <h3>{c.crop} · {t.kPrices}</h3>
+      <p>{t.noPrices(c.crop, c.state || "", c.days ?? "", c.complete !== false)}</p>
+    </div>
+  );
+}
+
+const CARD_TYPES = { notice: Notice, soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
 
 export function Cards({ cards, lang }) {
   if (!Array.isArray(cards) || !cards.length) return null;
