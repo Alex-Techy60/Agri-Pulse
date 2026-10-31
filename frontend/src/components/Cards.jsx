@@ -107,7 +107,28 @@ function Diagnosis({ c }) {
   );
 }
 
-const CARD_TYPES = { forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+const WATER = { RAIN_COVERS_NEED: "rain covers need", WETTER_THAN_OPTIMUM: "wetter than ideal", NEEDS_IRRIGATION: "needs irrigation", NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED: "needs irrigation (little rain)", FAR_WETTER_THAN_CROP_TOLERATES: "too wet" };
+
+function CropFit({ c }) {
+  const rows = c.crops || [];
+  if (!rows.length) return null;
+  return (
+    <div className="card">
+      <h3>{c.title}</h3>
+      <table>
+        <thead><tr><td>Crop</td><td>Fit</td><td>Sow about</td><td>Harvest</td><td>Water</td></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.crop}><td>{r.crop}</td><td>{r.fit}</td><td>{r.sow_on}</td><td>{r.harvest_from} to {r.harvest_to}</td><td>{WATER[r.rain_label] || r.rain_label}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      {c.note && <small className="muted">{c.note}</small>}
+    </div>
+  );
+}
+
+const CARD_TYPES = { crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
 
 export function Cards({ cards }) {
   if (!cards?.length) return null;

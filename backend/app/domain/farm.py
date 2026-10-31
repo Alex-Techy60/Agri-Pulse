@@ -11,6 +11,7 @@ import re
 from app.domain import Domain, Intent
 from app.domain.diagnosis import BRAND_PATTERN, RATE_PATTERN, VISION_PROMPT, parse_diagnosis
 from app.guardrails.validators import Validator, forbid_patterns, forbid_unless_negated, grounded_dates, grounded_numbers, grounded_units, max_words, numeric_limit
+from app.tools.crop_fit import crop_fit
 from app.tools.crop_stage import crop_stage
 from app.tools.location import FILLER
 from app.tools.mandi import ALIASES, cross, crop_key, crops_in_text, mandi
@@ -30,6 +31,7 @@ PERSONA = (
     "Do not recommend pesticide doses or brands; say to follow the product label and local agriculture officer. "
     "Do not give phone numbers. Never read out web addresses; name the source briefly instead. "
     "Cite only real data sources (Open-Meteo, data.gov.in Agmarknet) with their date; never name internal parts such as 'code', 'rule', 'signal', 'DECISION' or 'Market Position' as a source. "
+    "A source citation carries the date the data was fetched, never a sowing, harvest or forecast date. "
     "Soil moisture is only a number: never call the soil dry, wet, low or high unless CONTEXT says so, because that depends on the soil. "
     "Irrigation advice is for a crop that is growing; if CONTEXT does not give the crop stage, say that it depends on the stage. "
     "Never ask the farmer for prices, market names or other figures; ask only for what MISSING INFO names. "
@@ -100,6 +102,10 @@ LABEL_TEXT = {
         "RAIN_COVERS_DEMAND": "बारिश पानी की मांग पूरी करती है", "RAIN_SHORT_OF_DEMAND": "बारिश पानी की मांग से कम है",
         "SELL_NOW": "अभी बेचने का संकेत, भाव गिर रहे हैं", "SELL_BEFORE_RAIN": "बारिश से पहले बेचने पर विचार करें", "STORAGE_RISK": "भंडारण का जोखिम",
         "WATERLOGGING_RISK": "जलभराव का खतरा", "DRY_SPELL_ALERT": "सूखे दौर की चेतावनी", "IRRIGATION_URGENT": "सिंचाई जल्दी ज़रूरी",
+        "NEEDS_IRRIGATION": "सिंचाई चाहिए", "NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED": "बारिश बहुत कम है, सिंचाई ज़रूरी", "RAIN_COVERS_NEED": "बारिश से ज़रूरत पूरी होती है",
+        "WETTER_THAN_OPTIMUM": "ज़रूरत से ज़्यादा बारिश", "FAR_WETTER_THAN_CROP_TOLERATES": "फसल की सहनसीमा से बहुत ज़्यादा बारिश", "NOT_SUITABLE": "उपयुक्त नहीं",
+        "BEFORE_EARLIEST_HARVEST": "कटाई का समय अभी नहीं आया", "IN_HARVEST_WINDOW": "कटाई का समय चल रहा है", "PAST_LATEST_CYCLE": "सामान्य अवधि से आगे निकल चुकी", "NOT_SOWN_YET": "अभी बोई नहीं गई",
+        "OUTSIDE_TOLERANCE": "सहनसीमा से बाहर",
         "HEAVY_RAIN": "भारी बारिश", "HEAT_STRESS": "गर्मी का तनाव", "COLD_STRESS": "ठंड का तनाव", "INSUFFICIENT_DATA": "पर्याप्त आंकड़े नहीं",
     },
     "mr": {
@@ -108,6 +114,10 @@ LABEL_TEXT = {
         "RAIN_COVERS_DEMAND": "पाऊस पाण्याची गरज भागवतो", "RAIN_SHORT_OF_DEMAND": "पाऊस पाण्याच्या गरजेपेक्षा कमी आहे",
         "SELL_NOW": "आता विकण्याचा संकेत, भाव घसरत आहेत", "SELL_BEFORE_RAIN": "पावसापूर्वी विकण्याचा विचार करा", "STORAGE_RISK": "साठवणुकीचा धोका",
         "WATERLOGGING_RISK": "पाणी साचण्याचा धोका", "DRY_SPELL_ALERT": "कोरड्या काळाचा इशारा", "IRRIGATION_URGENT": "सिंचन लवकर आवश्यक",
+        "NEEDS_IRRIGATION": "सिंचन लागेल", "NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED": "पाऊस खूप कमी, सिंचन आवश्यक", "RAIN_COVERS_NEED": "पावसाने गरज भागते",
+        "WETTER_THAN_OPTIMUM": "गरजेपेक्षा जास्त पाऊस", "FAR_WETTER_THAN_CROP_TOLERATES": "पिकाच्या सहनशक्तीपेक्षा खूप जास्त पाऊस", "NOT_SUITABLE": "योग्य नाही",
+        "BEFORE_EARLIEST_HARVEST": "काढणीची वेळ अजून आलेली नाही", "IN_HARVEST_WINDOW": "काढणीचा काळ सुरू आहे", "PAST_LATEST_CYCLE": "नेहमीच्या कालावधीपेक्षा पुढे गेले", "NOT_SOWN_YET": "अजून पेरलेले नाही",
+        "OUTSIDE_TOLERANCE": "सहनशक्तीच्या बाहेर",
         "HEAVY_RAIN": "मुसळधार पाऊस", "HEAT_STRESS": "उष्णतेचा ताण", "COLD_STRESS": "थंडीचा ताण", "INSUFFICIENT_DATA": "पुरेशी माहिती नाही",
     },
 }
@@ -121,16 +131,20 @@ DOMAIN = Domain(
         Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Never say or imply what prices will do next: if asked to predict or promise a price, say plainly that you cannot forecast prices and give only the past-week trend. Never call a market the farmer's own unless CONTEXT has a YOUR MARKET line; otherwise say 'markets in <district>'. Give the DECISION from CONTEXT first. If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. When the DECISION is NEUTRAL, say plainly that prices show no clear rise or fall over the week, so the data does not point to selling now or to waiting. When there is NO PRICE TREND or no price data at all, say that no trend (or no price) is available and never call prices neutral or steady. In both cases give the prices and market position you have, and leave the choice to the farmer. Say hold or sell as advice ONLY when the DECISION is HOLD or SELL_NOW: never write 'you may hold', 'you can wait' or similar. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest. The best-paying market is the highest in the whole state, so never call it a market in the farmer's district unless CONTEXT says so. Never print rule labels written in CAPITAL_LETTERS_WITH_UNDERSCORES; say them in plain words.", ["sell", "hold", "wait", "store", "बेच", "भाव कब", "विक", "थांब", "साठव", "रुक", "bech", "ruk jaun", "ruk jau", "kab bech"]),
         Intent("market_price", "today's mandi / market price of a crop, price trend", "If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. Then the trend and the highest markets. Mention the unit (Rs per quintal) and the date. Never present the state-wide average as the price in the farmer's own market.", ["price", "rate", "mandi", "bhav", "भाव", "दाम", "दर", "किंमत", "कीमत", "बाजार", "मंडी", "bhaav", "daam"]),
         Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT. If CONTEXT has a WATER BALANCE line, say in plain words whether the coming rain covers the crop's water demand and by how many mm; it is a reference figure, not the exact need of the crop.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश", "पाऊस", "हवामान", "फवारणी", "छिड़क", "सिंचाई", "सिंचन", "तापमान", "baarish", "barish", "mausam", "dawai", "chhidk"]),
-        Intent("sow_or_crop_care", "when to sow or harvest, soil moisture, crop care this week", "Use soil moisture and the 7-day rain outlook from CONTEXT; say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई", "पेरणी", "काढणी", "माती", "मिट्टी"]),
+        Intent("sow_or_crop_care", "soil moisture, crop care and field work this week", "Use soil moisture and the 7-day rain outlook from CONTEXT. If CONTEXT has CROP FIT lines, use them for the sowing window and harvest window of the farmer's crop (a climate guide, to be confirmed with the agriculture officer); say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई", "पेरणी", "काढणी", "माती", "मिट्टी"]),
+        Intent("crop_suggest", "which crop to grow or sow now, what is suitable for my place, best time to sow, when will my crop be ready to harvest",
+               "Use ONLY the CROP FIT lines in CONTEXT. List the suitable crops with their temperature fit, sowing date, harvest window and whether rain or irrigation covers the need; say these are crops that fit the climate, not a ranking by profit, and that soil, variety, water supply and prices are not included. For the farmer's own crop give the sowing windows and, if a SOWN line exists, say whether it is before, inside or past the usual harvest window. Tell the farmer to confirm with the local agriculture officer or KVK. Never name a crop, date or cycle that is not in CONTEXT.",
+               ["which crop", "what crop", "what to grow", "what to plant", "what should i sow", "what should i grow", "suitable crop", "best crop", "when to sow", "when to plant", "when to harvest", "ready to harvest", "कौन सी फसल", "कौन सा फसल", "क्या उगाऊं", "क्या लगाऊं", "कब बोएं", "कब बोना", "कब काटें", "कटाई कब", "कोणते पीक", "कोणतं पीक", "काय पेरू", "कधी पेरावे", "कधी काढणी", "काढणी कधी", "kaun si fasal", "kab boyen", "kab kaatein", "konsa pik"]),
         Intent("crop_health", "plant disease, pest, yellow or spotted leaves, a photo of a sick crop", "If CONTEXT has no IMAGE ASSESSMENT, you cannot see the plants: say so, ask the farmer to send a clear photo with the camera button or to describe the symptoms, and send them to the local KVK or agriculture officer; never say a data source is unreachable (none is involved) and never name a spray. Otherwise use the IMAGE ASSESSMENT in CONTEXT only. Describe the visible symptoms and possible causes in simple words, say it is a visual guess, and tell the farmer to show the plants to the local KVK or agriculture officer. No pesticide names, doses or rates.", ["disease", "pest", "leaf", "leaves", "yellow", "spot", "insect", "photo", "रोग", "कीट", "पत्ते", "पाने", "पान", "डाग", "धब्बे", "किडी", "फोटो", "bimari", "keeda", "daag", "patta", "patte"]),
         Intent("general", "greeting or anything else", "You can only help with this farm's weather, rain, mandi prices, when to sell, and photos of sick crops. For anything else (government schemes and eligibility, loans, insurance, news, sports) say plainly that you have no verified information on it, point to the local agriculture officer or KVK, and invite a question about weather, prices or when to sell. Never start an eligibility check and never ask for personal or land details.", []),
     ],
-    tools={"weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage},
+    tools={"crop_fit": crop_fit, "weather": weather, "mandi": mandi, "cross_check": cross, "rain_history": rain_history, "crop_stage": crop_stage},
     intent_tools={
         "sell_or_hold": ["mandi", "weather"],
         "market_price": ["mandi"],
         "weather_advice": ["weather", "rain_history"],
-        "sow_or_crop_care": ["weather", "rain_history"],
+        "sow_or_crop_care": ["weather", "rain_history", "crop_fit"],
+        "crop_suggest": ["crop_fit", "weather"],
     },
     label_text=LABEL_TEXT,
     question_overrides=question_overrides,
@@ -140,6 +154,7 @@ DOMAIN = Domain(
         "weather": "7-day forecast, soil moisture, risk flags, spray-safe days, irrigation advice",
         "mandi": "last 7 days of mandi prices for the crop, nearby markets, sell/hold signal",
         "rain_history": "rain in the last 7/14/30 days vs next 7 days; dry-spell, irrigation-urgent and waterlogging alerts",
+        "crop_fit": "which crops fit this place's climate now, best sowing windows for the farmer's crop, harvest window from a sowing date",
     },
     post_tools={"sell_or_hold": ["cross_check"], "weather_advice": ["crop_stage"], "sow_or_crop_care": ["crop_stage"]},
     # HARD rules: safety and correctness. A draft that still breaks one after the rewrites is replaced by the safe answer.
@@ -180,13 +195,13 @@ DOMAIN = Domain(
         forbid_patterns({
             r"[\u0400-\u04ff\u0370-\u03ff\u0590-\u06ff\u0e00-\u0e7f\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]": "Contains a word in a foreign script (for example Russian or Chinese). Use only the farmer's language and plain digits.",
             r"\b(?-i:(?=[A-Za-z_]*[a-z]))[A-Za-z]+(?:_[A-Za-z]+)+\b": "Prints an internal rule label (words joined by underscores). Say it in plain words in the farmer's language.",
-            r"[\u3010\u3011\u300c\u300d]|\((?:[^()]*\b)?(?:code|decision|market position|highest markets|water balance|risk flags?)\s*(?:code)?[,)]": "Names an internal part of the system as a source (for example 'Market Position code' or 'DECISION'). Name only the data source, such as Open-Meteo or Agmarknet, and its date.",
+            r"[\u3010\u3011\u300c\u300d]|\((?:[^()]*\b)?(?:code|decision|market position|highest markets|water balance|risk flags?|crop fit)\s*(?:code)?[,)]": "Names an internal part of the system as a source (for example 'Market Position code' or 'DECISION'). Name only the data source, such as Open-Meteo or Agmarknet, and its date.",
         }),
         forbid_patterns({
             r"[0-9][\u0966-\u096f]|[\u0966-\u096f][0-9]": "Mixes Devanagari and ordinary digits inside one number (for example 202\u096c). Write every number with ordinary digits only.",
             r"[A-Za-z][\u0900-\u097f]|[\u0900-\u097f][A-Za-z]": "Mixes Latin and Devanagari letters inside one word. Write each word fully in one script.",
         }),
-        max_words(170),
+        max_words(200),
     ],
     safe_fallback=(
         "I cannot give a reliable answer right now. Please check with your local Krishi Vigyan Kendra (KVK) "
@@ -222,5 +237,6 @@ DOMAIN = Domain(
     profile_fields=[
         {"key": "place", "label": "Village / town (e.g. Nashik, Maharashtra)", "placeholder": "Nashik, Maharashtra"},
         {"key": "crop", "label": "Crop", "placeholder": "Onion", "options": sorted({k.title() for k in {v: k for k, v in reversed(ALIASES.items())}.values()})},  # one name per commodity: no Soybean AND Soyabean
+        {"key": "sowing_date", "label": "Sowing date (optional, day/month/year)", "placeholder": "15/07/2026"},
     ],
 )

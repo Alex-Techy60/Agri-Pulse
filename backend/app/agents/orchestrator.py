@@ -61,7 +61,7 @@ def script_lang(text: str) -> str:
     return (devanagari_lang(text) or "hi") if code == "hi" else code
 
 
-TEXT_PROFILE_KEYS = ("place", "crop", "state", "district")
+TEXT_PROFILE_KEYS = ("place", "crop", "state", "district", "sowing_date")
 NUM_PROFILE_KEYS = ("lat", "lon")
 HISTORY_MAX_SESSIONS = 1000
 CORRECTION_BUDGET_S = 45.0  # past this a rejected draft is not rewritten again: on a rate-limited free tier every draft can take 20 s+
