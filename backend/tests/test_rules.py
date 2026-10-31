@@ -80,6 +80,7 @@ def test_trend_direction_rising_is_hold_falling_is_sell_steady_is_neutral():
     up = pr.trend_signal(then + day_records("08/11/2026", [2200] * 6))
     down = pr.trend_signal(then + day_records("08/11/2026", [1800] * 6))
     flat = pr.trend_signal(then + day_records("08/11/2026", [2040] * 6))
+    assert up["band_pct"] == pr.TREND_BAND_PCT == 5.0  # the card carries the rule band so the UI never hard-codes it
     assert (up["signal"], up["change_pct"]) == ("HOLD", 10.0) and (down["signal"], down["change_pct"]) == ("SELL_NOW", -10.0) and flat["signal"] == "NEUTRAL"
     assert up["compared_with"] == "2026-11-01" and up["latest_date"] == "2026-11-08" and up["window_days"] == 7 and up["markets_compared"] == 6
     assert up["pct_vs_baseline"] == up["change_pct"] and up["baseline_mean"] == 2000 and up["latest"] == 2200 and up["trend_per_day"] > 0

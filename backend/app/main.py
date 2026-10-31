@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,12 +39,22 @@ app.add_middleware(
 )
 app.include_router(router)
 
-# One-container deploy: serve the built SPA from the API (`npm run build` first).
-if DIST.exists():
-    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+def mount_spa(application: FastAPI, dist: Path) -> None:
+    """One-container deploy: serve the built SPA from the API (`npm run build` first).
+    Only real page routes fall back to index.html. A missing file (favicon.ico, robots.txt, a stale .js) or an unknown /api path
+    is a 404: answering them with HTML 200 made browsers try to decode the page as an icon and hid API typos."""
+    if not dist.exists():
+        return
+    application.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @application.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
-        f = (DIST / path).resolve()
-        safe = path and f.is_file() and DIST.resolve() in f.parents  # block ../ traversal
-        return FileResponse(f if safe else DIST / "index.html")
+        f = (dist / path).resolve()
+        if path and f.is_file() and dist.resolve() in f.parents:  # block ../ traversal
+            return FileResponse(f)
+        if path.startswith("api/") or path == "api" or Path(path).suffix:
+            raise HTTPException(404, "Not found.")
+        return FileResponse(dist / "index.html")
+
+
+mount_spa(app, DIST)

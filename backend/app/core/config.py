@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     rag_top_k: int = 6
     rag_min_score: float = 0.05
 
+    chat_db_path: str = ""  # saved chats (SQLite); empty = backend/data/chats.db. Point at a mounted disk to survive redeploys
+
     # --- Agents ----------------------------------------------------------
     max_self_corrections: int = 2
     history_turns: int = 6

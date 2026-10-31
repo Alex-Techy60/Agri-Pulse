@@ -61,6 +61,11 @@ class VectorStore:
     def remember(self, session_id: str, text: str, kind: str = "turn") -> None:
         self.add(MEMORY, [text], [{"session_id": session_id, "kind": kind, "source": "memory"}])
 
+    def forget_session(self, session_id: str) -> None:
+        """Delete everything remembered for one session (a chat the person deleted must not linger in recalled memory)."""
+        flt = models.Filter(must=[models.FieldCondition(key="session_id", match=models.MatchValue(value=session_id))])
+        self.client.delete(MEMORY, points_selector=models.FilterSelector(filter=flt))
+
     # ----------------------------------------------------------------- read
     def search(self, collection: str, query: str, k: int | None = None, session_id: str | None = None) -> list[Hit]:
         want = k or self.s.rag_top_k

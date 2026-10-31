@@ -48,3 +48,6 @@ docs/DEMO_SCRIPT.md
 
 # the crop-limits table (3.7 KB, rebuilt from FAO EcoCrop by scripts/build_ecocrop_subset.py) is code-adjacent data the app needs at runtime
 !backend/data/ecocrop_subset.csv
+
+# saved chats (per-person history; real user text, never committed)
+backend/data/chats.db*

@@ -14,6 +14,7 @@ from app.api.ratelimit import enforce
 from app.core import stats
 from app.core.config import get_settings
 from app.llm.client import get_llm
+from app.memory.chats import CHAT_ID, get_chats, owner_key
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
 from app.tools import PlaceNotFound
 from app.tools.reverse_geo import locate
@@ -65,33 +66,102 @@ def domain():
     return {"title": d.title, "tagline": d.tagline, "suggested_prompts": d.suggested_prompts, "suggested_prompts_by_lang": d.suggested_prompts_by_lang, "languages": d.languages, "profile_fields": d.profile_fields}
 
 
+def _scoped_session(owner: str | None, body: ChatIn) -> str:
+    """Saved chats key the model's context by owner+chat, so two people can never share a session by choosing the same id.
+    A resumed chat gets its earlier turns back from the database. No client id (curl, tests) keeps the old anonymous behaviour."""
+    if not owner or not CHAT_ID.match(body.session_id):
+        return body.session_id
+    sid = f"{owner[:16]}:{body.session_id}"
+    orch = get_orchestrator()
+    if sid not in orch.history:
+        orch.restore_history(sid, get_chats().recent(owner, body.session_id, orch.s.history_turns * 2))
+    return sid
+
+
+def _save_turn(owner: str | None, body: ChatIn, result: dict) -> None:
+    """Only real answers are saved: the 'something went wrong' fallback and an empty question are not history."""
+    if not owner or not body.message.strip() or any(t.get("agent") == "Pipeline" for t in result.get("trace", [])):
+        return
+    user_text = f"📷 {body.message}" if body.image_b64 else body.message
+    meta = {k: result.get(k) for k in ("cards", "live_sources", "sources", "degraded", "language", "live_only")}
+    result["message_id"] = get_chats().append_turn(owner, body.session_id, user_text, result["answer"], meta)  # additive: lets the UI attach feedback to this answer
+
+
 @router.post("/chat")
-def chat(body: ChatIn, request: Request):
+def chat(body: ChatIn, request: Request, x_client_id: str | None = Header(None)):
     enforce(request, body.session_id)
+    owner = owner_key(x_client_id)
     try:
-        return get_orchestrator().run(body.message, body.session_id, body.language, body.image_b64, body.profile).dict()
+        result = get_orchestrator().run(body.message, _scoped_session(owner, body), body.language, body.image_b64, body.profile).dict()
     except Exception:
         log.error("chat pipeline error", exc_info=True)
         return _error_result(body.language)
+    _save_turn(owner, body, result)
+    return result
 
 
 @router.post("/chat/stream")
-def chat_stream(body: ChatIn, request: Request):
+def chat_stream(body: ChatIn, request: Request, x_client_id: str | None = Header(None)):
     """Server-sent events: one `trace` event per pipeline step, then one `final`."""
     enforce(request, body.session_id)
     orch = get_orchestrator()
+    owner = owner_key(x_client_id)
 
     def gen():
         try:
-            for ev in orch.stream(body.message, body.session_id, body.language, body.image_b64, body.profile):
+            for ev in orch.stream(body.message, _scoped_session(owner, body), body.language, body.image_b64, body.profile):
                 if ev["type"] == "final":
                     ev = {"type": "final", "result": ev["result"].dict()}
+                    _save_turn(owner, body, ev["result"])
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception:
             log.error("chat stream error", exc_info=True)
             yield f"data: {json.dumps({'type': 'final', 'result': _error_result(body.language)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _owner_or_400(x_client_id: str | None) -> str:
+    owner = owner_key(x_client_id)
+    if not owner:
+        raise HTTPException(400, "Missing or invalid X-Client-Id header.")
+    return owner
+
+
+@router.get("/chats")
+def list_chats(x_client_id: str | None = Header(None)):
+    """This person's saved chats, newest first. Another person's chats are never visible: every query is scoped to the owner."""
+    return {"chats": get_chats().list_chats(_owner_or_400(x_client_id))}
+
+
+@router.get("/chats/{chat_id}")
+def read_chat(chat_id: str, x_client_id: str | None = Header(None)):
+    chat = get_chats().get_chat(_owner_or_400(x_client_id), chat_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found.")
+    return chat
+
+
+class FeedbackIn(BaseModel):
+    message_id: int = Field(..., ge=1)
+    value: str | None = Field(None, pattern="^(up|down)$")  # null clears the vote
+
+
+@router.put("/feedback")
+def feedback(body: FeedbackIn, x_client_id: str | None = Header(None)):
+    """Thumbs up/down on one answer. Scoped to the owner: another person's answer id is a 404, not a vote."""
+    if not get_chats().set_feedback(_owner_or_400(x_client_id), body.message_id, body.value):
+        raise HTTPException(404, "Answer not found.")
+    return {"ok": True}
+
+
+@router.delete("/chats/{chat_id}")
+def remove_chat(chat_id: str, x_client_id: str | None = Header(None)):
+    owner = _owner_or_400(x_client_id)
+    if not get_chats().delete_chat(owner, chat_id):
+        raise HTTPException(404, "Chat not found.")
+    get_orchestrator().forget_history(f"{owner[:16]}:{chat_id}")
+    return {"deleted": True}
 
 
 @router.get("/live-check")

@@ -183,6 +183,7 @@ def trend_signal(records: list[dict]) -> dict:
         "compared_with": a.isoformat(),
         "window_days": gap,
         "markets_compared": len(shared),
+        "band_pct": TREND_BAND_PCT,  # the rule the UI explains: a move of this size or more is HOLD / SELL_NOW
         "trend_per_day": round((now - base) / gap, 1),
     }
 

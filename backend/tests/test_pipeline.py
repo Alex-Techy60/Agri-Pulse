@@ -206,3 +206,14 @@ def test_hinglish_typed_in_roman_letters_is_answered_in_roman_letters_unless_a_l
     msgs = o._build_messages(o.domain.intents[0], "hi", "ctx", "", "default", "baarish hogi kya", roman=True)
     assert "written in Roman letters" in msgs[0]["content"] and "do not use Devanagari" in msgs[0]["content"]
     assert "Roman letters" not in o._build_messages(o.domain.intents[0], "hi", "ctx", "", "default", "x")[0]["content"]
+
+
+def test_offline_answer_is_flagged_live_only_and_never_cut_mid_line():
+    from app.agents.orchestrator import OFFLINE_MARK, _cut_at_line
+    r = run(["good"], FakeLLM(off=True))
+    assert r.live_only and r.answer.startswith(OFFLINE_MARK)
+    ok = run(["good"], FakeLLM(["Max 33 C."]))
+    assert not ok.live_only  # a real AI answer is never folded away
+    text = "line one 2026-10-22: Rs 7248\nline two 2026-10-23: Rs 7147\nline three"
+    assert _cut_at_line(text, 40) == "line one 2026-10-22: Rs 7248"
+    assert _cut_at_line("short", 40) == "short"

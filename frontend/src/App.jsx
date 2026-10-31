@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { chatStream, getDomain, getHealth, locate, transcribe } from "./api.js";
+import { chatStream, deleteChat, getChat, getDomain, getHealth, listChats, locate, newChatId, sendFeedback, transcribe } from "./api.js";
 import Trace from "./components/Trace.jsx";
-import { Cards, Sources } from "./components/Cards.jsx";
+import MessageList from "./components/MessageList.jsx";
+import Composer from "./components/Composer.jsx";
+import History from "./components/History.jsx";
+import Profile from "./components/Profile.jsx";
+import AnimatedBadge from "./components/AnimatedBadge.jsx";
+import { prepareImage } from "./image.js";
+import { say, stopSpeech, useVoices } from "./speech.js";
+import { uiText } from "./i18n.js";
 
-const SESSION = crypto.randomUUID?.() ?? String(Date.now());
+// The open chat survives a page reload; its messages come back from the server.
+const loadChatId = () => { try { return localStorage.getItem("chatId") || newChatId(); } catch { return newChatId(); } };
+const saveChatId = (id) => { try { localStorage.setItem("chatId", id); } catch { /* private mode */ } };
 const loadProfile = () => { try { return JSON.parse(localStorage.getItem("profile") || "{}"); } catch { return {}; } };
 const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringify(p)); } catch { /* private mode */ } };
 const loadLang = () => { try { return localStorage.getItem("lang") || "en"; } catch { return "en"; } };
 const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* private mode */ } };
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // the API caps image_b64 at about 5 MB
-// The few messages written by the UI itself (everything else comes from the API in the farmer's language).
-const UI_TEXT = {
-  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question.", nomic: "The microphone is not available. Allow microphone access (the page needs https), or type your question.", useloc: "Use my location", noloc: "I could not get your location. Allow location access (the page needs https), or type your village or town." },
-  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।", nomic: "माइक्रोफ़ोन उपलब्ध नहीं है। माइक्रोफ़ोन की अनुमति दें (पेज https पर होना चाहिए) या सवाल लिखें।", useloc: "मेरी लोकेशन इस्तेमाल करें", noloc: "आपकी लोकेशन नहीं मिल सकी। लोकेशन की अनुमति दें (पेज https पर होना चाहिए) या अपना गाँव या शहर लिखें।" },
-  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा.", nomic: "मायक्रोफोन उपलब्ध नाही. मायक्रोफोनची परवानगी द्या (पेज https वर असावे) किंवा प्रश्न लिहा.", useloc: "माझे स्थान वापरा", noloc: "तुमचे स्थान मिळू शकले नाही. स्थानाची परवानगी द्या (पेज https वर असावे) किंवा तुमचे गाव किंवा शहर लिहा." },
-};
-const uiText = (lang) => UI_TEXT[lang] || UI_TEXT.en;
+const stamp = () => new Date().toISOString();
 // Voice: Chrome/Firefox record webm, Safari/iPhone records mp4, so the recorder picks what the browser supports and the file name follows the real type.
 const MAX_RECORD_MS = 60_000; // a forgotten mic must not grow past the server's 5 MB limit
 const MIN_AUDIO_BYTES = 2000; // below this there is no speech worth sending
@@ -46,12 +48,8 @@ function startMeter(stream) {
 }
 const audioExt = (type) => (/mp4|m4a|aac/.test(type) ? "m4a" : /ogg/.test(type) ? "ogg" : "webm");
 const PHOTO_PROMPT = "Please check this crop photo.";
-const readB64 = (file) => new Promise((ok, bad) => {
-  const fr = new FileReader();
-  fr.onload = () => ok(String(fr.result).split(",")[1]); // the API wants raw base64, no data: prefix
-  fr.onerror = bad;
-  fr.readAsDataURL(file);
-});
+const loadRate = () => { try { return Number(localStorage.getItem("rate")) || 1; } catch { return 1; } };
+const saveRate = (r) => { try { localStorage.setItem("rate", String(r)); } catch { /* private mode */ } };
 
 export default function App() {
   const [domain, setDomain] = useState(null);
@@ -66,50 +64,136 @@ export default function App() {
   const [locating, setLocating] = useState(false);
   const [speak, setSpeak] = useState(false);
   const [profile, setProfile] = useState(loadProfile);
-  const [photo, setPhoto] = useState(null);
+  const [photo, setPhoto] = useState(null); // {b64, previewUrl, name}: already shrunk to 1024 px
+  const [slow, setSlow] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [rate, setRate] = useState(loadRate);
+  const voices = useVoices();
+  const [chatId, setChatId] = useState(loadChatId);
+  const [chats, setChats] = useState([]);
+  const [drawer, setDrawer] = useState(false);
+  const opened = useRef(0); // the latest chat the person asked to open; a slow earlier request must not overwrite it
   const recorder = useRef(null);
+  const abortRef = useRef(null); // lets the Stop button cancel the answer being written
+  const [dragging, setDragging] = useState(false);
   const busyRef = useRef(false);
-  const endRef = useRef(null);
 
   useEffect(() => {
     getDomain().then(setDomain).catch(() => setDomain({ title: "Backend unreachable", tagline: "Start it: make dev", suggested_prompts: [], languages: { en: "English" } }));
     getHealth().then(setHealth).catch(() => {});
+    // Reopen the chat that was open last time, but only if the server has it (asking for an unsaved one is a 404 in the console).
+    listChats().then((cs) => { setChats(cs); if (cs.some((c) => c.id === chatId)) getChat(chatId).then((c) => setMsgs(c.messages)).catch(() => {}); }).catch(() => {});
   }, []);
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [msgs, trace]);
+  useEffect(() => saveChatId(chatId), [chatId]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]); // screen readers and Devanagari shaping follow the chosen language
+
+  const refreshChats = () => listChats().then(setChats).catch(() => {}); // history is a convenience: the chat works without it
+
+  function newChat() {
+    if (busy) return;
+    opened.current += 1;
+    setChatId(newChatId());
+    setMsgs([]);
+    setTrace([]);
+    setDrawer(false);
+  }
+
+  async function openChat(id) {
+    if (busy || id === chatId) return setDrawer(false);
+    const mine = ++opened.current;
+    try {
+      const c = await getChat(id);
+      if (mine !== opened.current) return;
+      setChatId(id);
+      setMsgs(c.messages);
+      setTrace([]);
+      setDrawer(false);
+    } catch {
+      if (mine === opened.current) botSay(uiText(lang).loadfail);
+    }
+  }
+
+  async function removeChat(id) {
+    if (busy || !window.confirm(uiText(lang).delask)) return;
+    await deleteChat(id).catch(() => {});
+    if (id === chatId) newChat();
+    refreshChats();
+  }
 
   async function send(text) {
     text = (text ?? input).trim() || (photo ? PHOTO_PROMPT : "");
     if (!text || busy) return;
     const image = photo;
+    let stoppedPhoto = false;
     setInput("");
     setPhoto(null);
     setBusy(true);
+    setSlow(false);
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    const slowTimer = setTimeout(() => setSlow(true), 15_000); // live sources can be slow: say so instead of looking frozen
     setTrace([]);
-    setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text }]);
+    setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text, at: stamp() }]);
     try {
-      const imageB64 = image ? await readB64(image) : undefined;
-      const r = await chatStream({ message: text, sessionId: SESSION, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop } }, (s) => setTrace((t) => [...t, s]));
-      setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r }]);
+      const imageB64 = image?.b64;
+      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
+      setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r, at: stamp(), id: r.message_id || undefined, feedback: null }]);
+      refreshChats();
       if (r.profile?.place) { const np = { ...profile, place: profile.place || r.profile.place }; setProfile(np); saveProfile(np); }
-      if (speak && "speechSynthesis" in window) {
-        const u = new SpeechSynthesisUtterance(r.answer);
-        u.lang = lang;
-        speechSynthesis.speak(u);
-      }
+      if (speak) speakNow(r.answer, r.language || lang);
     } catch (e) {
-      const text = e.retryAfter ? uiText(lang).wait(e.retryAfter) : uiText(lang).down;
-      setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
+      if (e.stopped) { // the person pressed Stop: nothing was saved, so take the question back into the box instead of leaving a half chat
+        setMsgs((m) => m.slice(0, -1));
+        setInput(text === PHOTO_PROMPT ? "" : text);
+        if (image) { setPhoto(image); stoppedPhoto = true; }
+        return;
+      }
+      const failure = e.retryAfter ? uiText(lang).wait(e.retryAfter) : e.timeout ? uiText(lang).timeout : e.offline ? uiText(lang).offline : uiText(lang).down;
+      setMsgs((m) => [...m, { role: "bot", text: failure, meta: { degraded: true }, at: stamp(), retry: image ? undefined : text }]); // a photo is not kept, so only text can be retried
     } finally {
+      clearTimeout(slowTimer);
+      setSlow(false);
       setBusy(false);
+      abortRef.current = null;
+      if (image && !stoppedPhoto) URL.revokeObjectURL(image.previewUrl);
     }
   }
 
-  function pickPhoto(e) {
+  // Automatic read-aloud uses the same per-language voice as the Listen button; no voice for the language means a visible note, not silence.
+  function speakNow(text, l) {
+    const out = say(text, l, { rate, voices });
+    if (out === "novoice") setNotice(uiText(lang).novoice(domain.languages[l] || l));
+  }
+
+  const stop = () => abortRef.current?.abort();
+
+  // Thumbs: shown at once, saved in the background; if saving fails the thumb goes back so the screen never claims a vote that was lost.
+  async function vote(m, value) {
+    const set = (v) => setMsgs((all) => all.map((x) => (x.id === m.id ? { ...x, feedback: v } : x)));
+    set(value);
+    if (!(await sendFeedback(m.id, value))) set(m.feedback ?? null);
+  }
+
+  // Drop a crop photo anywhere on the page. Only images; same resize path as the camera button.
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  async function dropPhoto(e) {
+    e.preventDefault();
+    setDragging(false);
+    const f = [...(e.dataTransfer?.files || [])][0];
+    if (!f || busy) return;
+    if (!f.type.startsWith("image/")) return botSay(uiText(lang).notImage);
+    try { setPhoto(await prepareImage(f)); } catch { botSay(uiText(lang).photoFail); }
+  }
+
+  async function pickPhoto(e) {
     const f = e.target.files?.[0];
     e.target.value = ""; // lets the same file be picked again
     if (!f) return;
-    if (f.size > MAX_PHOTO_BYTES) return alert("Photo is too large. Please use one under 5 MB.");
-    setPhoto(f);
+    try {
+      setPhoto(await prepareImage(f)); // resized in the browser: a phone photo is several MB, a diagnosis needs far less
+    } catch {
+      botSay(uiText(lang).photoFail); // a format this browser cannot decode (some HEIC files)
+    }
   }
 
   // "Use my location": the browser's coordinates go to /api/locate only, which hands back a place name; nothing else sees or keeps them.
@@ -128,7 +212,16 @@ export default function App() {
     );
   }
 
-  const botSay = (text) => setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
+  function setField(key, value) { const np = { ...profile, [key]: value }; setProfile(np); saveProfile(np); }
+
+  const botSay = (text) => setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true }, at: stamp() }]);
+
+  // Try again: drop the failed question and its error, then ask it afresh (nothing was saved for a failed turn).
+  function retry(text) {
+    if (busy) return;
+    setMsgs((m) => m.slice(0, -2));
+    send(text);
+  }
 
   async function toggleMic() {
     if (transcribing) return;
@@ -175,75 +268,50 @@ export default function App() {
   busyRef.current = busy;
   if (!domain) return null;
   return (
-    <div className="app">
+    <div className="app" onDragOver={(e) => { if (hasFiles(e)) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={dropPhoto}>
+      {dragging && (
+        <div className="dropzone" role="status">
+          <div><span aria-hidden="true">📷</span><h3>{uiText(lang).dropTitle}</h3><p>{uiText(lang).dropHint}</p></div>
+        </div>
+      )}
       <header>
         <div>
           <h1>{domain.title}</h1>
           <p>{domain.tagline}</p>
         </div>
         <div className="controls">
+          <button type="button" className="mic hbtn" onClick={() => setDrawer(true)} aria-label={uiText(lang).history} aria-expanded={drawer} aria-controls="history">☰ {uiText(lang).history}</button>
           <select value={lang} onChange={(e) => { setLang(e.target.value); saveLang(e.target.value); }} aria-label="Language">
             {Object.entries(domain.languages).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
           </select>
-          <label className="chk"><input type="checkbox" checked={speak} onChange={(e) => setSpeak(e.target.checked)} /> Read aloud</label>
-          {health && <span className={`pill ${health.llm_configured ? "ok" : "warn"}`}>{health.llm_configured ? "AI online" : "AI offline (live data only)"}</span>}
+          <label className="chk"><input type="checkbox" checked={speak} onChange={(e) => { setSpeak(e.target.checked); if (!e.target.checked) stopSpeech(); }} /> 🔊 Read aloud</label>
+          <select value={rate} onChange={(e) => { setRate(Number(e.target.value)); saveRate(Number(e.target.value)); }} aria-label={uiText(lang).rate} title={uiText(lang).rate}>
+            <option value={0.8}>🐢 {uiText(lang).slow}</option>
+            <option value={1}>{uiText(lang).normal}</option>
+            <option value={1.25}>🐇 {uiText(lang).fast}</option>
+          </select>
+          {health && <AnimatedBadge text={health.llm_configured ? "AI online" : "AI offline (live data only)"} color={health.llm_configured ? "#3ecf8e" : "#ff8a3d"} />}
         </div>
       </header>
 
-      <div className="profile">
-        {(domain.profile_fields || []).map((f) => (
-          <label key={f.key}>
-            <span>{f.label}</span>
-            <input
-              list={f.options ? `opt-${f.key}` : undefined}
-              value={profile[f.key] || ""}
-              placeholder={f.placeholder}
-              onChange={(e) => { const np = { ...profile, [f.key]: e.target.value }; setProfile(np); saveProfile(np); }}
-            />
-            {f.options && <datalist id={`opt-${f.key}`}>{f.options.map((o) => <option key={o} value={o} />)}</datalist>}
-            {f.key === "place" && <button type="button" className="loc" onClick={useLocation} disabled={locating}>📍 {locating ? "…" : uiText(lang).useloc}</button>}
-          </label>
-        ))}
-      </div>
+      <Profile fields={domain.profile_fields || []} profile={profile} onChange={setField} lang={lang} onLocate={useLocation} locating={locating} />
 
       <main>
-        <section className="chat">
-          {msgs.length === 0 && (
-            <div className="suggest">
-              {(domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts).map((p) => (
-                <button key={p} onClick={() => send(p)}>{p}</button>
-              ))}
-            </div>
-          )}
-          {msgs.map((m, i) => (
-            <div key={i} className={`msg ${m.role}`}>
-              <p>{m.text}</p>
-              <Cards cards={m.meta?.cards} />
-              <Sources list={m.meta?.live_sources} />
-              {m.meta?.sources?.length > 0 && <small>Documents: {m.meta.sources.join(", ")}</small>}
-              {m.meta?.degraded && <small className="warn"> · degraded mode</small>}
-            </div>
-          ))}
-          {busy && <div className="msg bot typing">thinking…</div>}
-          <div ref={endRef} />
-        </section>
+        <History chats={chats} chatId={chatId} open={drawer} busy={busy} lang={lang} onNew={newChat} onOpen={openChat} onDelete={removeChat} onClose={() => setDrawer(false)} />
+        <MessageList
+          msgs={msgs} chatId={chatId} busy={busy} step={trace[trace.length - 1]} lang={lang}
+          prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
+          onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
+        />
 
-        <aside>
-          <h2>Agent trace</h2>
-          <Trace steps={trace} />
+        <aside aria-label={uiText(lang).trace}>
+                    <Trace steps={trace} lang={lang} />
         </aside>
       </main>
 
-      <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <button type="button" className={rec ? "mic on" : "mic"} onClick={toggleMic} disabled={transcribing} aria-label="Voice input">{rec ? "■" : transcribing ? "…" : "🎤"}</button>
-        <label className={photo ? "mic photo on" : "mic photo"} title={photo ? photo.name : "Add a crop photo"}>
-          📷<input type="file" accept="image/*" onChange={pickPhoto} disabled={busy} aria-label="Add a crop photo" />
-        </label>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={photo ? `Photo ready: ${photo.name}` : "Ask anything…"} disabled={busy} />
-        <button type="submit" disabled={busy || (!input.trim() && !photo)}>Send</button>
-      </form>
+      <Composer value={input} onChange={setInput} onSend={() => send()} busy={busy} photo={photo} onPhoto={pickPhoto} onClearPhoto={() => { URL.revokeObjectURL(photo?.previewUrl); setPhoto(null); }} rec={rec} transcribing={transcribing} onMic={toggleMic} lang={lang} onStop={stop} />
     </div>
   );
 }

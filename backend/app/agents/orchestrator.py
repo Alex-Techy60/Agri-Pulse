@@ -75,6 +75,8 @@ def script_lang(text: str) -> str:
 TEXT_PROFILE_KEYS = ("place", "crop", "state", "district", "sowing_date")
 NUM_PROFILE_KEYS = ("lat", "lon")
 HISTORY_MAX_SESSIONS = 1000
+OFFLINE_MARK = "(AI summary unavailable - showing live data only)"
+OFFLINE_MAX_CHARS = 6000  # the raw data is folded in the UI, so it can be fuller; it is cut at a line end, never mid-number
 CORRECTION_BUDGET_S = 45.0  # past this a rejected draft is not rewritten again: on a rate-limited free tier every draft can take 20 s+
 
 
@@ -121,6 +123,7 @@ class ChatResult:
     live_sources: list[dict] = field(default_factory=list)  # {name,url,fetched_at,stale}
     cards: list[dict] = field(default_factory=list)  # forecast / price cards for the UI
     profile: dict = field(default_factory=dict)  # resolved place/state/lat/lon + crop
+    live_only: bool = False  # the AI was unavailable: `answer` is the raw live data, so the UI shows the cards first and the text folded
 
     def dict(self) -> dict:
         return asdict(self)
@@ -138,6 +141,25 @@ class Orchestrator:
         self._lock = threading.Lock()  # request threads share profiles/history
 
     # ------------------------------------------------------------------ API
+    def restore_history(self, session_id: str, turns: list[dict]) -> None:
+        """A saved chat resumed after a restart (or on another worker): give the model its earlier turns back.
+        Only when this process has none, so the live in-memory history is never overwritten."""
+        if session_id == "default" or not turns:
+            return
+        with self._lock:
+            if session_id not in self.history:
+                self.history[session_id].extend(turns)
+
+    def forget_history(self, session_id: str) -> None:
+        """The person deleted this chat: drop the model's context, the remembered profile and the vector memory for it."""
+        with self._lock:
+            self.history.pop(session_id, None)
+            self.profiles.pop(session_id, None)
+        try:
+            self.store.forget_session(session_id)
+        except Exception:  # memory is best-effort, like everywhere else in the pipeline
+            pass
+
     def run(self, text: str, session_id: str = "default", language: str | None = None, image_b64: str | None = None, profile: dict | None = None) -> ChatResult:
         final = None
         for ev in self.stream(text, session_id, language, image_b64, profile):
@@ -384,7 +406,7 @@ class Orchestrator:
             except Exception:
                 pass
 
-        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved)}
+        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved, live_only=answer.startswith(OFFLINE_MARK))}
 
     # -------------------------------------------------------------- internals
     def _route(self, text: str, language: str | None) -> tuple[Intent, str, str, bool, dict]:
@@ -427,10 +449,16 @@ class Orchestrator:
             return "To help you I need: " + "; ".join(missing.values()) + "."
         data = [_plain_failure(t) for t in tool_ctx if not t.startswith(("MISSING", "TOOL FAILED"))]
         if data:
-            return "(AI summary unavailable - showing live data only)\n\n" + "\n\n".join(data)[:1800]
+            return OFFLINE_MARK + "\n\n" + _cut_at_line("\n\n".join(data), OFFLINE_MAX_CHARS)
         if kb:
             return "(AI offline) Most relevant document text:\n" + kb[0].text[:400]
         return "I'm offline right now and have no live data for that. Please try again shortly."
+
+
+def _cut_at_line(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit("\n", 1)[0]
 
 
 _FAILURE = re.compile(r"^(\w+?) (?:SOURCE UNAVAILABLE|FAILED: place not found)")
