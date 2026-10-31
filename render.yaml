@@ -15,6 +15,18 @@ services:
         value: https://openrouter.ai/api/v1
       - key: FALLBACK_MODEL
         value: nvidia/nemotron-3-ultra-550b-a55b:free
+      - key: FALLBACK2_API_KEY
+        sync: false
+      - key: FALLBACK2_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: FALLBACK2_MODEL
+        value: meta-llama/llama-3.3-70b-instruct:free
+      - key: FALLBACK3_API_KEY
+        sync: false
+      - key: FALLBACK3_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: FALLBACK3_MODEL
+        value: google/gemma-3-27b-it:free
       - key: DATA_GOV_API_KEY
         sync: false
       - key: MANDI_FILTER_STYLE

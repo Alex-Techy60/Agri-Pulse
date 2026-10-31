@@ -22,7 +22,10 @@ def test_ladder_primary_fallback_offline():
     s = Settings(llm_api_key="k", llm_base_url="https://primary.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
     r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
     assert r.text == "from fallback" and r.provider == "fallback" and r.degraded
-    r2 = LLMClient(Settings(llm_api_key=""), transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], offline="OFF")
+    r2 = LLMClient(
+        Settings(llm_api_key="", fallback_api_key="", fallback2_api_key="", fallback3_api_key=""),
+        transport=httpx.MockTransport(handler),
+    ).chat([{"role": "user", "content": "hi"}], offline="OFF")
     assert r2.provider == "offline" and r2.text == "OFF"
 
 
@@ -199,3 +202,52 @@ def test_a_segment_that_loops_on_one_phrase_is_dropped_but_ordinary_speech_with_
     ordinary = {"segments": [{"text": "Should I sell my onions now?", "avg_logprob": -0.14, "no_speech_prob": 0, "compression_ratio": 0.79}]}
     assert speech_text(looping) == "" and speech_text(ordinary) == "Should I sell my onions now?"
     assert speech_text({"segments": [{"text": "a", "compression_ratio": 3.0}, {"text": "kept", "compression_ratio": 1.2}]}) == "kept"
+
+
+def test_fallback2_and_fallback3_catch_when_fallback1_also_fails():
+    """FALLBACK2 and FALLBACK3 entries are tried in order when every earlier provider fails."""
+    import httpx
+
+    hits: list[str] = []
+
+    def handler(req):
+        host = req.url.host
+        hits.append(host)
+        if host in ("primary.test", "fb1.test", "fb2.test"):
+            return httpx.Response(429, json={"error": "rate"})
+        # fb3.test answers
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from fallback3"}}]})
+
+    s = Settings(
+        llm_api_key="k", llm_base_url="https://primary.test/v1",
+        fallback_api_key="k2", fallback_base_url="https://fb1.test/v1", fallback_model="m1",
+        fallback2_api_key="k3", fallback2_base_url="https://fb2.test/v1", fallback2_model="m2",
+        fallback3_api_key="k4", fallback3_base_url="https://fb3.test/v1", fallback3_model="m3",
+    )
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from fallback3" and r.provider == "fallback3" and r.degraded
+    assert "fb3.test" in hits  # the third fallback was actually reached
+
+
+def test_fallback2_is_reached_before_fallback3_and_short_circuits():
+    """When FALLBACK2 succeeds, FALLBACK3 is never called."""
+    import httpx
+
+    hits: list[str] = []
+
+    def handler(req):
+        host = req.url.host
+        hits.append(host)
+        if host in ("primary.test", "fb1.test"):
+            return httpx.Response(429, json={"error": "rate"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from fb2"}}]})
+
+    s = Settings(
+        llm_api_key="k", llm_base_url="https://primary.test/v1",
+        fallback_api_key="k2", fallback_base_url="https://fb1.test/v1", fallback_model="m1",
+        fallback2_api_key="k3", fallback2_base_url="https://fb2.test/v1", fallback2_model="m2",
+        fallback3_api_key="k4", fallback3_base_url="https://fb3.test/v1", fallback3_model="m3",
+    )
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from fb2" and r.provider == "fallback2" and r.degraded
+    assert "fb3.test" not in hits  # fallback3 was never contacted
