@@ -1,19 +1,42 @@
-# KisaanMitra — live-data farm decision agent (FORGE '26 · Theme 2)
+# KisaanMitra — live-data farm decision agent (FORGE '26 · Theme 2, problem 1)
 
-> **TODO before submission:** screenshot/GIF, live URL, demo video link, team.
+> **Before submission, fill in by hand:** live URL · demo video link · team names (marked `TODO` below).
 
-KisaanMitra turns a farmer's *place + crop* into a clear, spoken recommendation — **sell or hold on the recent price trend, spray today, skip irrigation, protect the crop** — using only **live** data: Open-Meteo (weather, soil moisture, rain history) and data.gov.in/Agmarknet (mandi prices). Risk flags and the sell/hold signal (a recent-trend indicator, not a price forecast) are computed by deterministic code; the LLM only explains them in the farmer's language, and guardrails reject any number or date that is not in the tool output. If a source is down it says so — it never invents data.
+![KisaanMitra answering a live question for Nashik onions, with the agent trace](assets/screenshot.png)
+_A real run on 31 Oct 2026 (Nashik, onion): the answer, its sources with dates, the price card, and the live agent trace._
+
+**Live URL:** TODO · **Demo video:** TODO · **Team:** TODO
+
+## Problem and user
+Small farmers decide when to sell, spray or irrigate without a clear view of live mandi prices or the coming weather. The data exists (data.gov.in Agmarknet, Open-Meteo) but is scattered and rarely in their language, and a generic chatbot may invent the numbers. A wrong number costs real money.
+Illustrative persona (not a real person): Sunita, 45, grows onions near Nashik, speaks Marathi, and is deciding when to sell.
+
+## Solution
+KisaanMitra turns a farmer's *place + crop* into a clear, spoken recommendation — **sell or hold on the recent price trend, spray today, skip irrigation, protect the crop** — using only **live** data: Open-Meteo (weather, soil moisture, rain history, evapotranspiration) and data.gov.in/Agmarknet (mandi prices). Risk flags, the water balance and the sell/hold signal (a recent-trend indicator, not a price forecast) are computed by deterministic code; the LLM only explains them in the farmer's language (Hindi, Marathi, English and 7 more), by text or voice, and guardrails reject any number or date that is not in the tool output. If a source is down it says so — it never invents data.
 
 ## How it works
+```mermaid
+flowchart LR
+  UI["React UI<br/>text, voice, photo"] -- "SSE" --> API["FastAPI<br/>/api/chat/stream"]
+  API --> R["Router<br/>fast LLM + keyword fallback"]
+  R --> P["Planner<br/>LLM adds tools, code validates"]
+  P --> T
+  subgraph T ["Live tools, in parallel"]
+    W["weather + soil + ET0<br/>Open-Meteo"]
+    H["rain history<br/>Open-Meteo"]
+    M["mandi prices + trend<br/>data.gov.in Agmarknet"]
+  end
+  T -- "failed source is retried once" --> X["Post-tools in code<br/>cross_check, crop_stage"]
+  X --> K["Retriever<br/>documents + session memory"]
+  K --> S["Specialist LLM<br/>farmer's language"]
+  S --> G{"Guardrails in code<br/>numbers, units, dates, safety"}
+  G -- "violation: critique" --> S
+  G -- "passed" --> A["Answer + cards + sources with timestamps"]
+  G -. "still failing" .-> F["Safe fallback answer"]
+  V["Photo: vision LLM"] --> R
 ```
-React UI ──SSE──▶ FastAPI /api/chat/stream ──▶ Orchestrator
-  Router (fast LLM, keyword fallback)
-  → Planner (LLM picks extra tools; code validates) → Tools in parallel: weather · rain_history · mandi
-  → one retry for unreachable sources ("replan") → post-tools: cross_check (price position/trend × rain), crop_stage (cited crop rules)
-  → Retriever → Specialist (LLM, user's language) → Guardrails in code ⟲ self-correct → answer + cards + sources
-Photo: Vision model → structured diagnosis card (symptoms, severity, possible causes; no brands or doses)
-```
-Every step appears in the live **Agent Trace**. LLM calls go Groq main model → Groq small model (own daily quota) → OpenRouter fallback → offline mode (live data only, no AI summary).
+LLM calls go through one client: Groq main model → Groq small model (own daily quota) → OpenRouter fallback → offline mode. Photo input goes through the vision model into a structured diagnosis card (symptoms, severity, possible causes; no brands or doses).
+Every step appears in the live **Agent Trace** in the UI.
 
 ## Run it
 ```bash
@@ -24,6 +47,22 @@ make test && make dev      # API :8000, UI :5173
 make build && docker build -t kisaanmitra .   # one container: API serves the built UI
 ```
 Weather and rain history need no key. Without `LLM_API_KEY` the app shows live data only ("AI summary unavailable"). Mandi prices need `DATA_GOV_API_KEY`.
+
+## Tech stack
+Python 3.11 + FastAPI (SSE streaming) · React + Vite · Groq (`openai/gpt-oss-120b` main, `gpt-oss-20b` router/planner/reserve, `qwen/qwen3.8-27b` vision, Whisper `whisper-large-v3-turbo` speech) with OpenRouter as fallback · Open-Meteo and Nominatim geocoding · data.gov.in Agmarknet · in-process vector memory (Qdrant optional) · Docker, GitHub Actions CI, Render blueprint.
+
+## Environment variables
+All read through `backend/app/core/config.py`; copy `.env.example` to `.env` (git-ignored, never commit keys).
+
+| Variable | Needed for | Default |
+|---|---|---|
+| `LLM_API_KEY` | AI answers (Groq free key). Without it: live data only | empty |
+| `DATA_GOV_API_KEY` | mandi prices (free key from data.gov.in) | empty |
+| `FALLBACK_API_KEY`, `FALLBACK_BASE_URL`, `FALLBACK_MODEL` | second LLM provider (OpenRouter) | empty |
+| `LLM_MODEL`, `LLM_FAST_MODEL`, `LLM_VISION_MODEL`, `STT_MODEL` | model ids if Groq renames them | see `.env.example` |
+| `RATE_LIMIT_PER_MIN` | chat requests per client and session per minute (0 = off) | 20 |
+| `INGEST_API_KEY` | enables `POST /api/ingest` (disabled when empty) | empty |
+| `QDRANT_URL`, `QDRANT_API_KEY` | persistent memory (empty = in-process) | empty |
 
 ## API
 `POST /api/chat`, `POST /api/chat/stream` (SSE trace events then one final result), `POST /api/voice/transcribe`, `GET /api/locate?lat=&lon=` ("use my location": coordinates to a place name, from OpenStreetMap Nominatim; not stored or logged), `GET /api/health`, `GET /api/domain`, `GET /api/live-check`, `GET /api/stats` (aggregate counters, no user text), `POST /api/ingest` (disabled unless `INGEST_API_KEY` is set; send it as `X-Admin-Key`). Chat routes are rate limited (`RATE_LIMIT_PER_MIN`, default 20 per client+session, 3× that per client IP).
