@@ -38,7 +38,7 @@ Weather and rain history need no key. Without `LLM_API_KEY` the app shows live d
 | Pre-event generic boilerplate | Built during FORGE '26 (after 30 Oct 7:30 PM IST) |
 |---|---|
 | LLM client w/ provider fallback, vector-store wrapper, SSE API shell, React/Vite shell, Docker/CI files | Farm domain, live weather/soil + mandi tools, decision rules, grounded-number guardrail, parallel tools, ask-for-missing-input, source-failure handling, profile + forecast/price cards UI |
-| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, hermetic tests (171, no network or keys needed) |
+| | **Track 1 additions:** planner + one-retry re-plan, rain-history tool and card, crop-photo diagnosis card, cited crop-stage rules, per-session place/crop memory, prompt-injection defences, date grounding, negation-aware guarantee rule, circuit breaker + cache cap, rate limiting, `/api/stats`, locked-down ingest, safe API fallbacks, Devanagari place and crop input (native-script geocoding), Hindi and Marathi suggested questions, UI messages, safe answers and router keywords, last-complete-day rule for half-filled mandi days, offline answers without internals, crop photo upload, phone layout, hermetic tests (171, no network or keys needed) |
 
 The commit history is the evidence: `git log` shows the work added after the starter.
 
