@@ -173,8 +173,10 @@ def grounded_units(min_value: float = 10.0) -> Validator:
         for u, n in list(allowed):
             f = float(n)
             allowed.update({(u, str(int(f))), (u, str(round(f)))})
+        # Official documents carry bare numbers in tables ("Wheat | 2610 | 1264"): whatever unit the farmer is told, the figure is theirs.
+        doc_numbers = numbers_in("\n".join(seg for seg in context.split("\n---\n") if seg.lstrip().startswith("[")))
         known = numbers_in(context)  # a number absent from the context entirely is grounded_numbers' finding, not ours
-        bad = sorted(f"{n} {u}" for u, n in _unit_pairs(text) if (float(n) >= min_value or "." in n) and n in known and (u, n) not in allowed)
+        bad = sorted(f"{n} {u}" for u, n in _unit_pairs(text) if (float(n) >= min_value or "." in n) and n in known and n not in doc_numbers and (u, n) not in allowed)
         return [f"These figures are in the data but not as that kind of amount: {', '.join(bad)}. Use each number only with its own unit from the CONTEXT."] if bad else []
 
     check.wants_context = True  # type: ignore[attr-defined]

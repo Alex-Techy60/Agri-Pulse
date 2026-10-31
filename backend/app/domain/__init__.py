@@ -47,6 +47,9 @@ class Domain:
     suggested_prompts_by_lang: dict[str, list[str]] = field(default_factory=dict)  # same questions in the farmer's language; others fall back to English
     # (profile, {place, crop} the router found in the question, question) -> profile values the QUESTION overrides for this turn
     soft_validators: list[Validator] = field(default_factory=list)  # style rules: one rewrite is asked for, then the draft is delivered anyway
+    # (question, profile) -> the text to search documents with: native-script terms in the documents' language, the resolved crop
+    retrieval_query: Callable[[str, dict], str] | None = None
+    knowledge_intents: set[str] = field(default_factory=set)  # intents that retrieve documents; empty = all (an MSP paragraph has no place in a rain answer)
     label_text: dict[str, dict[str, str]] = field(default_factory=dict)  # language -> {RULE_LABEL: phrase in that language}
     question_overrides: Callable[[dict, dict, str], dict] | None = None
 

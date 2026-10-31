@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     embeddings: str = "hash"  # "hash" (offline, no download) | "fastembed"
     embed_dim: int = 256  # only for "hash"
-    rag_top_k: int = 4
+    rag_top_k: int = 6
     rag_min_score: float = 0.05
 
     # --- Agents ----------------------------------------------------------

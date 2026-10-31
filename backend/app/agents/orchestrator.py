@@ -51,6 +51,11 @@ def devanagari_lang(text: str) -> str | None:
     return "mr" if mr and not hi else "hi" if hi and not mr else None
 
 
+def _has_keyword(k: str, low: str) -> bool:
+    """Latin keywords match at the start of a word ("irrigat" finds "irrigation", but "heat" no longer finds "wheat"); native-script ones as substrings."""
+    return bool(re.search(r"(?<![a-z])" + re.escape(k), low)) if k.isascii() else k in low
+
+
 def is_romanised(text: str, chosen_language: str | None, lang: str) -> bool:
     """Hindi or Marathi typed in Roman letters ("pyaz ka bhav kya hai"): answer in Roman letters too. Only when the farmer did not
     pick a language in the UI (a chosen language is respected) and the message has no native script at all."""
@@ -293,8 +298,8 @@ class Orchestrator:
         t0 = time.time()
         kb, mem = [], []
         try:
-            if self.store.count(KNOWLEDGE):
-                kb = self.store.search(KNOWLEDGE, text)
+            if self.store.count(KNOWLEDGE) and (not self.domain.knowledge_intents or intent.name in self.domain.knowledge_intents):
+                kb = self.store.search(KNOWLEDGE, self.domain.retrieval_query(text, profile) if self.domain.retrieval_query else text)
             if session_id != "default":  # the shared anonymous session must never see another caller's questions
                 mem = self.store.search(MEMORY, text, k=2, session_id=session_id)
         except Exception as e:
@@ -400,7 +405,7 @@ class Orchestrator:
         low = text.lower()  # keyword fallback: never block on the router
         best, score = self.domain.intents[-1], 0
         for i in self.domain.intents:
-            sc = sum(1 for k in i.keywords if k in low)
+            sc = sum(1 for k in i.keywords if _has_keyword(k, low))
             if sc > score:
                 best, score = i, sc
         return best, language or script_lang(text), "keyword fallback", True, {}

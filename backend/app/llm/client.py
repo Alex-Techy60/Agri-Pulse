@@ -178,6 +178,7 @@ _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 # "Thank you." with probability 0 and avg_logprob -0.29), so that test cannot be relied on there. The phrase list below is
 # what actually catches it; the browser also skips the upload when the microphone level never rose.
 NO_SPEECH_P, LOW_LOGPROB = 0.6, -1.0
+MAX_COMPRESSION = 2.4  # Whisper's own decoding-failure test: text that compresses this well is looping on one phrase
 # What Whisper writes for silence or room noise (its training data was subtitled video). Dropping them costs nothing: none is a farm question.
 HALLUCINATIONS = {"thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching", "please subscribe", "bye", "goodbye", "you",
                   "okay", "ok", "oh", "uh", "um", "subtitles by the amara.org community", "धन्यवाद", "शुक्रिया", "देखने के लिए धन्यवाद", "आभारी आहे"}
@@ -199,7 +200,8 @@ def speech_text(result: dict) -> str:
         return ""
     segs = result.get("segments")
     if segs:
-        kept = [str(g.get("text", "")).strip() for g in segs if not (g.get("no_speech_prob", 0) > NO_SPEECH_P and g.get("avg_logprob", 0) < LOW_LOGPROB)]
+        kept = [str(g.get("text", "")).strip() for g in segs
+                if not (g.get("no_speech_prob", 0) > NO_SPEECH_P and g.get("avg_logprob", 0) < LOW_LOGPROB) and g.get("compression_ratio", 0) <= MAX_COMPRESSION]
         text = " ".join(t for t in kept if t).strip()
     else:
         text = str(result.get("text", "")).strip()

@@ -190,3 +190,12 @@ def test_reserve_model_answers_when_the_big_models_quota_is_spent_before_the_slo
     r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
     assert r.text == "from small" and r.provider == "reserve" and r.model == "small" and not r.degraded
     assert all(h == "p.test" for h, _ in models)  # the slow fallback was never needed
+
+
+def test_a_segment_that_loops_on_one_phrase_is_dropped_but_ordinary_speech_with_a_normal_ratio_is_kept():
+    from app.llm.client import speech_text
+
+    looping = {"segments": [{"text": "बारिश बारिश बारिश बारिश बारिश बारिश", "avg_logprob": -0.1, "no_speech_prob": 0, "compression_ratio": 3.1}]}
+    ordinary = {"segments": [{"text": "Should I sell my onions now?", "avg_logprob": -0.14, "no_speech_prob": 0, "compression_ratio": 0.79}]}
+    assert speech_text(looping) == "" and speech_text(ordinary) == "Should I sell my onions now?"
+    assert speech_text({"segments": [{"text": "a", "compression_ratio": 3.0}, {"text": "kept", "compression_ratio": 1.2}]}) == "kept"
