@@ -1,4 +1,4 @@
-.PHONY: setup dev api ui test seed build demo-check check-live clean
+.PHONY: setup dev api ui test seed build demo-check check-live eval eval-live clean
 
 PY ?= python3
 PLACE ?= Nashik, Maharashtra
@@ -34,6 +34,12 @@ build:
 
 check-live:
 	cd backend && ../$(BIN)/python -m scripts.check_live "$(PLACE)" "$(CROP)"
+
+eval:  # accuracy checks that need no LLM quota: places, crops, tool output vs source, sell/hold rule, router, guardrails
+	cd backend && ../$(BIN)/python -m scripts.evaluate offline
+
+eval-live:  # 30 real questions through a running backend (about 2,500 LLM tokens each; paced 20 s apart)
+	cd backend && ../$(BIN)/python -m scripts.evaluate live --base $(BASE)
 
 demo-check:
 	@curl -sf -m 90 $(BASE)/api/health >/dev/null && echo "PASS health" || (echo "FAIL health: is the API running at $(BASE)?"; exit 1)

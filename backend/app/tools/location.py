@@ -48,6 +48,20 @@ GEO_NAMES = {
 }
 
 
+# Maharashtra districts and big cities as farmers write them in Marathi/Hindi -> the English name the geocoder knows.
+# Needed because the geocoder lacks many native spellings (checked live 31 Oct 2026: Satara, Sangli, Indore returned nothing).
+NATIVE_PLACES = {
+    "अहिल्यानगर": "Ahilyanagar", "अहमदनगर": "Ahilyanagar", "अकोला": "Akola", "अमरावती": "Amravati", "छत्रपती संभाजीनगर": "Aurangabad", "बीड": "Beed",
+    "भंडारा": "Bhandara", "बुलढाणा": "Buldana", "चंद्रपूर": "Chandrapur", "धुळे": "Dhule", "गडचिरोली": "Gadchiroli", "गोंदिया": "Gondia",
+    "हिंगोली": "Hingoli", "जळगाव": "Jalgaon", "जालना": "Jalna", "मुंबई": "Mumbai", "नांदेड": "Nanded", "नंदुरबार": "Nandurbar",
+    "धाराशिव": "Dharashiv", "उस्मानाबाद": "Dharashiv", "पालघर": "Palghar", "परभणी": "Parbhani", "रायगड": "Alibag", "रत्नागिरी": "Ratnagiri",
+    "सांगली": "Sangli", "सातारा": "Satara", "सिंधुदुर्ग": "Sindhudurg", "ठाणे": "Thane", "वर्धा": "Wardha", "वाशीम": "Washim", "यवतमाळ": "Yavatmal",
+    "लासलगाव": "Lasalgaon", "मालेगाव": "Malegaon", "बारामती": "Baramati", "पंढरपूर": "Pandharpur", "कराड": "Karad", "शिर्डी": "Shirdi", "सिन्नर": "Sinnar",
+    "इंदौर": "Indore", "भोपाल": "Bhopal", "लखनऊ": "Lucknow", "पटना": "Patna", "अमृतसर": "Amritsar", "चंडीगढ़": "Chandigarh", "दिल्ली": "Delhi",
+    "अहमदाबाद": "Ahmedabad", "हैदराबाद": "Hyderabad", "बेंगलुरु": "Bengaluru", "जयपुर": "Jaipur", "आगरा": "Agra", "लुधियाना": "Ludhiana",
+}
+
+
 def _district_hints(rest: list[str]) -> list[str]:
     """Typed parts that are neither a state nor filler: the district/town the farmer named."""
     hints = []
@@ -81,7 +95,7 @@ def resolve_location(profile: dict) -> dict:
         raise NeedsInput("place", "the nearest town, village or district of the farm")
     parts = [p.strip() for p in place.split(",") if p.strip()]
     query = " ".join(w for w in parts[0].split() if w.lower() not in FILLER) or parts[0]  # "Raipur district" -> "Raipur"
-    query = GEO_NAMES.get(query.lower(), query)
+    query = NATIVE_PLACES.get(query, GEO_NAMES.get(query.lower(), query))
     results, f = [], None
     for lang in _search_langs(query):
         f = get_json(GEO_URL, {"name": query, "count": 10, "language": lang, "format": "json", "countryCode": "IN"}, ttl=86400)
@@ -91,6 +105,8 @@ def resolve_location(profile: dict) -> dict:
     if not results:
         raise PlaceNotFound(place)
     rest = [p.lower() for p in parts[1:]]
+    if parts[0] in NATIVE_PLACES:  # searched under the English name: a Devanagari state/district hint cannot match English records
+        rest = [p for p in rest if p.isascii()]
     # The geocoder orders by name match, not importance: "Panaji" returns a Gujarat village before Goa's capital and
     # "Ahmednagar" a Gujarat town before the Maharashtra city. Rank by state/district hint first, then by population.
     best = max(results, key=lambda r: (_score(r, rest), r.get("population") or 0))

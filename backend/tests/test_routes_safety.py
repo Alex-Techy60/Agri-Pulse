@@ -77,3 +77,53 @@ def test_live_check_is_rate_limited(client, monkeypatch):
         assert codes[0] == 200 and 429 in codes
     finally:
         s.rate_limit_per_min = old
+
+
+def _fake_llm(monkeypatch, result="hello", exc=None):
+    import app.api.routes as routes
+
+    seen = {}
+
+    class Fake:
+        def transcribe(self, audio, filename, language, prompt):
+            seen.update(filename=filename, language=language, prompt=prompt, size=len(audio))
+            if exc:
+                raise exc
+            return result
+
+    monkeypatch.setattr(routes, "get_llm", lambda: Fake())
+    return seen
+
+
+def test_voice_passes_a_known_language_and_its_vocabulary_hint_and_ignores_an_unknown_one(client, monkeypatch):
+    seen = _fake_llm(monkeypatch)
+    audio = b"0" * 3000
+    r = client.post("/api/voice/transcribe", files={"file": ("clip.webm", audio, "audio/webm")}, data={"language": "mr"})
+    assert r.json() == {"text": "hello"} and seen["language"] == "mr" and "कांदा" in seen["prompt"]
+    client.post("/api/voice/transcribe", files={"file": ("clip.webm", audio, "audio/webm")}, data={"language": "xx; drop"})
+    assert seen["language"] is None and seen["prompt"] is None
+
+
+def test_voice_file_name_follows_the_real_container(client, monkeypatch):
+    from app.api.routes import audio_name
+
+    assert audio_name("audio.m4a", "audio/mp4") == "audio.m4a" and audio_name("blob", "audio/mp4;codecs=mp4a.40.2") == "audio.m4a"
+    assert audio_name("blob", "audio/webm;codecs=opus") == "audio.webm" and audio_name(None, None) == "audio.webm"
+    assert audio_name("x.exe", "audio/ogg") == "audio.ogg"  # an extension the speech API does not know is not trusted
+    seen = _fake_llm(monkeypatch)
+    client.post("/api/voice/transcribe", files={"file": ("recording", b"0" * 3000, "audio/mp4")})
+    assert seen["filename"] == "audio.m4a"
+
+
+def test_voice_too_short_and_provider_errors_are_friendly_and_leak_nothing(client, monkeypatch):
+    import httpx
+
+    r = client.post("/api/voice/transcribe", files={"file": ("a.webm", b"0" * 100, "audio/webm")})
+    assert r.status_code == 200 and r.json()["text"] == "" and "too short" in r.json()["error"]
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/audio/transcriptions")
+    _fake_llm(monkeypatch, exc=httpx.HTTPStatusError("429 for url https://api.groq.com/x", request=req, response=httpx.Response(429, request=req)))
+    r = client.post("/api/voice/transcribe", files={"file": ("a.webm", b"0" * 3000, "audio/webm")})
+    assert "busy" in r.json()["error"] and "groq" not in r.text and "http" not in r.text
+    _fake_llm(monkeypatch, exc=RuntimeError("secret detail https://x"))
+    r = client.post("/api/voice/transcribe", files={"file": ("a.webm", b"0" * 3000, "audio/webm")})
+    assert r.status_code == 200 and "secret" not in r.text and "failed" in r.json()["error"]

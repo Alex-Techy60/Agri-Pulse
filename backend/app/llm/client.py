@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 
 import httpx
@@ -137,25 +138,68 @@ class LLMClient:
             return LLMResult(text="", provider="offline", degraded=True, error=f"{type(e).__name__}: {e}")
 
     # ----------------------------------------------------------------- audio
-    def transcribe(self, audio: bytes, filename: str = "audio.webm", language: str | None = None) -> str:
+    def transcribe(self, audio: bytes, filename: str = "audio.webm", language: str | None = None, prompt: str | None = None) -> str:
+        """Speech -> text with Whisper. verbose_json gives per-segment silence scores: on silence or room noise Whisper
+        otherwise invents phrases such as "Thank you.", which would be sent on as the farmer's question."""
         s = self.s
         if not s.llm_api_key:
             return ""
-        data = {"model": s.stt_model}
+        data = {"model": s.stt_model, "response_format": "verbose_json", "temperature": "0"}
         if language:
             data["language"] = language
-        r = self._http.post(
-            f"{s.llm_base_url.rstrip('/')}/audio/transcriptions",
-            headers={"Authorization": f"Bearer {s.llm_api_key}"},
-            data=data,
-            files={"file": (filename, audio)},
-        )
+        if prompt:
+            data["prompt"] = prompt  # vocabulary hint (crop and market words in the right script); it does not steer the content
+        for attempt in (1, 2):
+            try:
+                r = self._http.post(
+                    f"{s.llm_base_url.rstrip('/')}/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {s.llm_api_key}"},
+                    data=data,
+                    files={"file": (filename, audio)},
+                )
+                break
+            except _DROPPED:  # a connection the provider dropped: one retry, as for chat
+                if attempt == 2:
+                    raise
+                time.sleep(0.5)
         r.raise_for_status()
-        return r.json().get("text", "")
+        return speech_text(r.json())
 
 
 # --------------------------------------------------------------------- utils
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+# Whisper's own silence test: a segment is not speech when it is probably silent AND the model is unsure of its own words.
+# Groq's whisper-large-v3-turbo reports no_speech_prob = 0 for everything (checked 31 Oct 2026: pure silence came back as
+# "Thank you." with probability 0 and avg_logprob -0.29), so that test cannot be relied on there. The phrase list below is
+# what actually catches it; the browser also skips the upload when the microphone level never rose.
+NO_SPEECH_P, LOW_LOGPROB = 0.6, -1.0
+# What Whisper writes for silence or room noise (its training data was subtitled video). Dropping them costs nothing: none is a farm question.
+HALLUCINATIONS = {"thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching", "please subscribe", "bye", "goodbye", "you",
+                  "okay", "ok", "oh", "uh", "um", "subtitles by the amara.org community", "धन्यवाद", "शुक्रिया", "देखने के लिए धन्यवाद", "आभारी आहे"}
+
+
+def _plain(text: str) -> str:
+    """Lower-cased text without punctuation or symbols. By Unicode category, not a regex: Python's \\w drops Devanagari vowel signs and virama."""
+    return " ".join("".join(c for c in text.lower() if unicodedata.category(c)[0] not in "PS").split())
+
+
+def _is_hallucination(text: str) -> bool:
+    plain = _plain(text)
+    return not any(c.isalnum() for c in text) or plain in HALLUCINATIONS  # no letters or digits at all, or a stock phrase
+
+
+def speech_text(result: dict) -> str:
+    """Text of the segments that are speech. Falls back to the plain text when the provider sent no segment scores."""
+    if not isinstance(result, dict):
+        return ""
+    segs = result.get("segments")
+    if segs:
+        kept = [str(g.get("text", "")).strip() for g in segs if not (g.get("no_speech_prob", 0) > NO_SPEECH_P and g.get("avg_logprob", 0) < LOW_LOGPROB)]
+        text = " ".join(t for t in kept if t).strip()
+    else:
+        text = str(result.get("text", "")).strip()
+    return "" if _is_hallucination(text) else text
 
 
 RETRY_AFTER_MAX_S = 4.0

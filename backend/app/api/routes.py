@@ -2,6 +2,9 @@ import json
 import logging
 import secrets
 
+import httpx
+from fastapi.concurrency import run_in_threadpool
+
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -111,6 +114,20 @@ def live_check(request: Request, place: str = "Nashik, Maharashtra", crop: str =
     return out
 
 
+MIN_AUDIO_BYTES = 1000  # smaller than this cannot hold a spoken question
+AUDIO_EXTS = {"flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", "opus", "wav", "webm"}  # what the speech API accepts
+AUDIO_TYPES = {"audio/webm": "webm", "video/webm": "webm", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "m4a", "audio/ogg": "ogg",
+               "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/flac": "flac"}
+
+
+def audio_name(filename: str | None, content_type: str | None) -> str:
+    """Name for the speech API, whose container detection follows the extension: Safari sends mp4, other browsers webm."""
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    if ext not in AUDIO_EXTS:
+        ext = AUDIO_TYPES.get((content_type or "").split(";")[0].strip().lower(), "webm")
+    return f"audio.{ext}"
+
+
 @router.post("/voice/transcribe")
 async def transcribe(request: Request, file: UploadFile = File(...), language: str | None = Form(None)):
     enforce(request, "voice")
@@ -118,10 +135,17 @@ async def transcribe(request: Request, file: UploadFile = File(...), language: s
         audio = await file.read(MAX_AUDIO_BYTES + 1)  # never buffer an unbounded upload
         if len(audio) > MAX_AUDIO_BYTES:
             return {"text": "", "error": "Audio is too large (limit 5 MB). Please record a shorter question."}
-        text = get_llm().transcribe(audio, file.filename or "audio.webm", language)
+        if len(audio) < MIN_AUDIO_BYTES:
+            return {"text": "", "error": "Audio is too short. Please speak a little longer."}
+        domain = get_orchestrator().domain
+        lang = language if language in domain.languages else None  # never pass a client-chosen string on to the provider
+        # the call blocks for seconds: off the event loop, or every other request waits behind one transcription
+        text = await run_in_threadpool(get_llm().transcribe, audio, audio_name(file.filename, file.content_type), lang, domain.stt_prompts.get(lang or ""))
         return {"text": text}
     except Exception as e:
-        return {"text": "", "error": f"{type(e).__name__}: {e}"}
+        log.warning("transcription failed: %s", type(e).__name__)  # type only: the message holds the provider URL
+        busy = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
+        return {"text": "", "error": "The speech service is busy. Please try again in a minute." if busy else "Speech recognition failed. Please type your question."}
 
 
 @router.post("/ingest")

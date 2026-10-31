@@ -34,9 +34,9 @@ export async function chatStream({ message, sessionId, language, imageB64, profi
   return final;
 }
 
-export async function transcribe(blob, language) {
+export async function transcribe(blob, language, ext = "webm") {
   const fd = new FormData();
-  fd.append("file", blob, "audio.webm");
+  fd.append("file", blob, `audio.${ext}`); // the extension tells the speech model which container this is
   if (language) fd.append("language", language);
   return fetch("/api/voice/transcribe", { method: "POST", body: fd }).then(j);
 }

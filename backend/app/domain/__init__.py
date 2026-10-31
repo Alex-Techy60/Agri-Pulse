@@ -43,6 +43,7 @@ class Domain:
     tool_help: dict[str, str] = field(default_factory=dict)  # one line per tool, shown to the planner
     profile_fields: list[dict] = field(default_factory=list)  # UI profile form: {key,label,placeholder,options?}
     safe_fallback_by_lang: dict[str, str] = field(default_factory=dict)  # same text as safe_fallback, in the farmer's language
+    stt_prompts: dict[str, str] = field(default_factory=dict)  # speech-to-text vocabulary hint per language (words a farmer says)
     suggested_prompts_by_lang: dict[str, list[str]] = field(default_factory=dict)  # same questions in the farmer's language; others fall back to English
 
 

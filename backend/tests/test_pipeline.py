@@ -166,7 +166,8 @@ def test_keyword_router_understands_marathi_and_hindi_when_the_llm_is_down():
     for text, want in [("मी माझे पीक आता विकू की थांबू?", "sell_or_hold"), ("क्या मैं अपना प्याज़ अभी बेचूँ?", "sell_or_hold"),
                        ("आज माझ्या पिकाचा बाजारभाव काय आहे?", "market_price"), ("आज मंडी भाव क्या है?", "market_price"),
                        ("पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "weather_advice"), ("क्या आज दवा छिड़कना सुरक्षित है?", "weather_advice"),
-                       ("या आठवड्यात पाऊस पडेल का?", "weather_advice")]:
+                       ("या आठवड्यात पाऊस पडेल का?", "weather_advice"),
+                       ("pyaaz bechna chahiye ya ruk jaun", "sell_or_hold"), ("माझ्या कांद्याच्या पानांवर डाग आहेत, काय करू?", "crop_health")]:
         assert o._route(text, None)[0].name == want, text
 
 

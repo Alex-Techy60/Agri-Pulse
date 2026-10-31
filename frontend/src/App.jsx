@@ -11,11 +11,40 @@ const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* pr
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // the API caps image_b64 at about 5 MB
 // The few messages written by the UI itself (everything else comes from the API in the farmer's language).
 const UI_TEXT = {
-  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question." },
-  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।" },
-  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा." },
+  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question.", nomic: "The microphone is not available. Allow microphone access (the page needs https), or type your question." },
+  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।", nomic: "माइक्रोफ़ोन उपलब्ध नहीं है। माइक्रोफ़ोन की अनुमति दें (पेज https पर होना चाहिए) या सवाल लिखें।" },
+  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा.", nomic: "मायक्रोफोन उपलब्ध नाही. मायक्रोफोनची परवानगी द्या (पेज https वर असावे) किंवा प्रश्न लिहा." },
 };
 const uiText = (lang) => UI_TEXT[lang] || UI_TEXT.en;
+// Voice: Chrome/Firefox record webm, Safari/iPhone records mp4, so the recorder picks what the browser supports and the file name follows the real type.
+const MAX_RECORD_MS = 60_000; // a forgotten mic must not grow past the server's 5 MB limit
+const MIN_AUDIO_BYTES = 2000; // below this there is no speech worth sending
+const AUDIO_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+const pickAudioType = () => AUDIO_TYPES.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || "";
+const SPEECH_RMS = 0.015; // microphone level (0-1) that counts as sound: a quiet room stays below, speech is well above
+const MIN_SPEECH_FRAMES = 3; // 100 ms each: at least 0.3 s of sound, or nothing is uploaded
+// Level meter: counts 100 ms frames that were loud enough. Returns null where the browser has no analyser (then the clip is sent anyway).
+function startMeter(stream) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const m = { frames: 0, stop: () => { clearInterval(timer); ctx.close().catch(() => {}); } };
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      if (Math.sqrt(sum / buf.length) > SPEECH_RMS) m.frames += 1;
+    }, 100);
+    return m;
+  } catch {
+    return null;
+  }
+}
+const audioExt = (type) => (/mp4|m4a|aac/.test(type) ? "m4a" : /ogg/.test(type) ? "ogg" : "webm");
 const PHOTO_PROMPT = "Please check this crop photo.";
 const readB64 = (file) => new Promise((ok, bad) => {
   const fr = new FileReader();
@@ -33,10 +62,12 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [rec, setRec] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [speak, setSpeak] = useState(false);
   const [profile, setProfile] = useState(loadProfile);
   const [photo, setPhoto] = useState(null);
   const recorder = useRef(null);
+  const busyRef = useRef(false);
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -80,28 +111,51 @@ export default function App() {
     setPhoto(f);
   }
 
+  const botSay = (text) => setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
+
   async function toggleMic() {
+    if (transcribing) return;
     if (rec) return recorder.current?.stop();
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
-      const chunks = [];
-      mr.ondataavailable = (e) => chunks.push(e.data);
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setRec(false);
-        const out = await transcribe(new Blob(chunks, { type: "audio/webm" }), lang).catch(() => ({ text: "" }));
-        if (out.text) send(out.text);
-        else setMsgs((m) => [...m, { role: "bot", text: uiText(lang).deaf, meta: { degraded: true } }]);
-      };
-      recorder.current = mr;
-      mr.start();
-      setRec(true);
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      alert("Microphone not available");
+      return botSay(uiText(lang).nomic); // denied, no microphone, or an http page (browsers only allow the mic on https and localhost)
     }
+    const type = pickAudioType();
+    let mr;
+    try {
+      mr = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+    } catch {
+      stream.getTracks().forEach((t) => t.stop());
+      return botSay(uiText(lang).nomic);
+    }
+    const chunks = [];
+    const meter = startMeter(stream);
+    const stopTimer = setTimeout(() => mr.state === "recording" && mr.stop(), MAX_RECORD_MS);
+    mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    mr.onstop = async () => {
+      clearTimeout(stopTimer);
+      meter?.stop();
+      stream.getTracks().forEach((t) => t.stop());
+      setRec(false);
+      const realType = mr.mimeType || type || "audio/webm";
+      const blob = new Blob(chunks, { type: realType });
+      if (blob.size < MIN_AUDIO_BYTES || (meter && meter.frames < MIN_SPEECH_FRAMES)) return botSay(uiText(lang).deaf); // nothing was said: do not upload silence
+      setTranscribing(true);
+      const out = await transcribe(blob, lang, audioExt(realType)).catch(() => ({ text: "" }));
+      setTranscribing(false);
+      const heard = (out.text || "").trim();
+      if (!heard) return botSay(uiText(lang).deaf);
+      if (busyRef.current) setInput(heard); // an answer is still being written: keep what was said instead of dropping it
+      else send(heard);
+    };
+    recorder.current = mr;
+    mr.start();
+    setRec(true);
   }
 
+  busyRef.current = busy;
   if (!domain) return null;
   return (
     <div className="app">
@@ -165,7 +219,7 @@ export default function App() {
       </main>
 
       <form className="composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <button type="button" className={rec ? "mic on" : "mic"} onClick={toggleMic} aria-label="Voice input">{rec ? "■" : "🎤"}</button>
+        <button type="button" className={rec ? "mic on" : "mic"} onClick={toggleMic} disabled={transcribing} aria-label="Voice input">{rec ? "■" : transcribing ? "…" : "🎤"}</button>
         <label className={photo ? "mic photo on" : "mic photo"} title={photo ? photo.name : "Add a crop photo"}>
           📷<input type="file" accept="image/*" onChange={pickPhoto} disabled={busy} aria-label="Add a crop photo" />
         </label>

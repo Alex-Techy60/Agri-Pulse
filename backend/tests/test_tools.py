@@ -501,3 +501,18 @@ def test_district_names_the_geocoder_lacks_are_searched_under_a_name_it_knows():
     for typed, searched in [("Raigad", "Alibag"), ("Buldhana, Maharashtra", "Buldana"), ("Chhatrapati Sambhajinagar", "Aurangabad")]:
         assert loc_mod.resolve_location({"place": typed})["state"] == "Maharashtra"
         assert asked[-1] == searched
+
+
+def test_devanagari_district_names_the_geocoder_lacks_are_mapped_to_english_names():
+    import app.tools.location as loc_mod
+
+    asked = []
+
+    def routes(url, p):
+        asked.append((p["name"], p["language"]))
+        return {"results": [{"name": p["name"], "latitude": 1.0, "longitude": 2.0, "admin1": "Maharashtra", "admin2": "X", "population": 1}]}
+
+    install(routes)
+    for typed, searched in [("सातारा", "Satara"), ("सांगली, महाराष्ट्र", "Sangli"), ("इंदौर", "Indore")]:
+        loc_mod.resolve_location({"place": typed})
+        assert asked[-1] == (searched, "en")  # searched under the English name, in English
