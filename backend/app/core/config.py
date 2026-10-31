@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     fallback_api_key: str = ""
     fallback_model: str = ""
 
+    # Extra fallback providers, tried in order after FALLBACK_* (all OpenAI-compatible, all optional).
+    fallback2_base_url: str = ""
+    fallback2_api_key: str = ""
+    fallback2_model: str = ""
+    fallback3_base_url: str = ""
+    fallback3_api_key: str = ""
+    fallback3_model: str = ""
+
     llm_timeout_s: float = 25.0
     llm_temperature: float = 0.3
 

@@ -1,0 +1,64 @@
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -39,6 +39,14 @@
+     fallback_api_key: str = ""
+     fallback_model: str = ""
+ 
++    # Extra fallback providers, tried in order after FALLBACK_* (all OpenAI-compatible, all optional).
++    fallback2_base_url: str = ""
++    fallback2_api_key: str = ""
++    fallback2_model: str = ""
++    fallback3_base_url: str = ""
++    fallback3_api_key: str = ""
++    fallback3_model: str = ""
++
+     llm_timeout_s: float = 25.0
+     llm_temperature: float = 0.3
+ 
+--- a/backend/app/llm/client.py
++++ b/backend/app/llm/client.py
+@@ -62,6 +62,11 @@
+                 providers.append(("reserve", s.llm_base_url, s.llm_api_key, s.llm_fast_model))
+         if s.fallback_api_key and s.fallback_base_url and s.fallback_model and not primary_only:
+             providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model))
++        if not primary_only:
++            for n in ("2", "3"):  # optional extra providers: FALLBACK2_*, FALLBACK3_*
++                base, key, model = (getattr(s, f"fallback{n}_{f}") for f in ("base_url", "api_key", "model"))
++                if base and key and model:
++                    providers.append((f"fallback{n}", base, key, model))
+ 
+         last_err = "no provider configured (set LLM_API_KEY)"
+         for name, base, key, model in providers:
+@@ -75,7 +80,7 @@
+                 }
+                 if model.startswith("openai/gpt-oss"):  # reasoning models: reasoning tokens count against max_tokens
+                     body["reasoning_effort"] = "low"
+-                if name == "fallback" or model.startswith("openai/gpt-oss"):
++                if name.startswith("fallback") or model.startswith("openai/gpt-oss"):
+                     # the free fallback reasons too: at the router's 80 tokens it cut JSON off, losing Marathi detection
+                     body["max_tokens"] = max(max_tokens, MIN_REASONING_TOKENS)
+                 if json_mode:
+--- a/backend/tests/test_llm_client.py
++++ b/backend/tests/test_llm_client.py
+@@ -199,3 +199,21 @@
+     ordinary = {"segments": [{"text": "Should I sell my onions now?", "avg_logprob": -0.14, "no_speech_prob": 0, "compression_ratio": 0.79}]}
+     assert speech_text(looping) == "" and speech_text(ordinary) == "Should I sell my onions now?"
+     assert speech_text({"segments": [{"text": "a", "compression_ratio": 3.0}, {"text": "kept", "compression_ratio": 1.2}]}) == "kept"
++
++
++def test_third_provider_used_when_first_two_fail():
++    calls = []
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        calls.append(request.url.host)
++        if request.url.host == "f3.test":
++            return httpx.Response(200, json={"choices": [{"message": {"content": "from fallback3"}}]})
++        return httpx.Response(429, json={"error": "rate limited"})
++
++    s = Settings(llm_api_key="k", llm_base_url="https://p.test/v1",
++                 fallback_api_key="k2", fallback_base_url="https://f.test/v1", fallback_model="m",
++                 fallback2_api_key="k3", fallback2_base_url="https://f2.test/v1", fallback2_model="m2",
++                 fallback3_api_key="k4", fallback3_base_url="https://f3.test/v1", fallback3_model="m3")
++    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "x"}])
++    assert r.text == "from fallback3" and r.provider == "fallback3" and r.degraded
++    assert calls[-3:] == ["f.test", "f2.test", "f3.test"]

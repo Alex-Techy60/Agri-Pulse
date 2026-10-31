@@ -62,6 +62,11 @@ class LLMClient:
                 providers.append(("reserve", s.llm_base_url, s.llm_api_key, s.llm_fast_model))
         if s.fallback_api_key and s.fallback_base_url and s.fallback_model and not primary_only:
             providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model))
+        if not primary_only:
+            for n in ("2", "3"):  # optional extra providers: FALLBACK2_*, FALLBACK3_*
+                base, key, model = (getattr(s, f"fallback{n}_{f}") for f in ("base_url", "api_key", "model"))
+                if base and key and model:
+                    providers.append((f"fallback{n}", base, key, model))
 
         last_err = "no provider configured (set LLM_API_KEY)"
         for name, base, key, model in providers:
@@ -75,7 +80,7 @@ class LLMClient:
                 }
                 if model.startswith("openai/gpt-oss"):  # reasoning models: reasoning tokens count against max_tokens
                     body["reasoning_effort"] = "low"
-                if name == "fallback" or model.startswith("openai/gpt-oss"):
+                if name.startswith("fallback") or model.startswith("openai/gpt-oss"):
                     # the free fallback reasons too: at the router's 80 tokens it cut JSON off, losing Marathi detection
                     body["max_tokens"] = max(max_tokens, MIN_REASONING_TOKENS)
                 if json_mode:
