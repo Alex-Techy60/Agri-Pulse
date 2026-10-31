@@ -9,6 +9,13 @@ const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringif
 const loadLang = () => { try { return localStorage.getItem("lang") || "en"; } catch { return "en"; } };
 const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* private mode */ } };
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // the API caps image_b64 at about 5 MB
+// The few messages written by the UI itself (everything else comes from the API in the farmer's language).
+const UI_TEXT = {
+  en: { down: "Something went wrong reaching the server. Please try again.", wait: (n) => `Too many questions right now. Please wait ${n} seconds and try again.`, deaf: "I could not hear that clearly. Please try again, or type your question." },
+  hi: { down: "सर्वर तक पहुँचने में दिक्कत हुई। कृपया फिर से कोशिश करें।", wait: (n) => `अभी बहुत सवाल आ गए हैं। कृपया ${n} सेकंड रुककर फिर कोशिश करें।`, deaf: "मैं साफ़ सुन नहीं पाया। कृपया फिर से बोलें या सवाल लिखें।" },
+  mr: { down: "सर्व्हरशी संपर्क होऊ शकला नाही. कृपया पुन्हा प्रयत्न करा.", wait: (n) => `सध्या खूप प्रश्न आले आहेत. कृपया ${n} सेकंद थांबून पुन्हा प्रयत्न करा.`, deaf: "मला नीट ऐकू आले नाही. कृपया पुन्हा बोला किंवा प्रश्न लिहा." },
+};
+const uiText = (lang) => UI_TEXT[lang] || UI_TEXT.en;
 const PHOTO_PROMPT = "Please check this crop photo.";
 const readB64 = (file) => new Promise((ok, bad) => {
   const fr = new FileReader();
@@ -58,7 +65,7 @@ export default function App() {
         speechSynthesis.speak(u);
       }
     } catch (e) {
-      const text = e.retryAfter ? `Too many questions right now. Please wait ${e.retryAfter} seconds and try again.` : "Something went wrong reaching the server. Please try again.";
+      const text = e.retryAfter ? uiText(lang).wait(e.retryAfter) : uiText(lang).down;
       setMsgs((m) => [...m, { role: "bot", text, meta: { degraded: true } }]);
     } finally {
       setBusy(false);
@@ -85,6 +92,7 @@ export default function App() {
         setRec(false);
         const out = await transcribe(new Blob(chunks, { type: "audio/webm" }), lang).catch(() => ({ text: "" }));
         if (out.text) send(out.text);
+        else setMsgs((m) => [...m, { role: "bot", text: uiText(lang).deaf, meta: { degraded: true } }]);
       };
       recorder.current = mr;
       mr.start();
@@ -132,7 +140,7 @@ export default function App() {
         <section className="chat">
           {msgs.length === 0 && (
             <div className="suggest">
-              {domain.suggested_prompts.map((p) => (
+              {(domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts).map((p) => (
                 <button key={p} onClick={() => send(p)}>{p}</button>
               ))}
             </div>

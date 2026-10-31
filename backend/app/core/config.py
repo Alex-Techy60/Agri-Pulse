@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     rag_min_score: float = 0.05
 
     # --- Agents ----------------------------------------------------------
-    max_self_corrections: int = 1
+    max_self_corrections: int = 2
     history_turns: int = 6
 
 

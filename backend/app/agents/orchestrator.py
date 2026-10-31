@@ -230,7 +230,7 @@ class Orchestrator:
 
         tool_ctx = ([image_ctx] if image_ctx else []) + [r.text for r in results.values()]
         if missing:
-            tool_ctx.append("MISSING INFO: ask the user, in one friendly question, for: " + "; ".join(f"{k} ({h})" for k, h in missing.items()))
+            tool_ctx.append("MISSING INFO: ask the user, in one friendly question, for: " + "; ".join(f"{k} ({h})" for k, h in missing.items()) + ". Say nothing else: no risk flags, no advice, no data.")
         for n in failed:
             tool_ctx.append(f"TOOL FAILED: {n}. Tell the user this check could not be done; do not guess.")
         live_sources, seen = [], set()

@@ -57,7 +57,7 @@ def get_stats():
 @router.get("/domain")
 def domain():
     d = get_orchestrator().domain
-    return {"title": d.title, "tagline": d.tagline, "suggested_prompts": d.suggested_prompts, "languages": d.languages, "profile_fields": d.profile_fields}
+    return {"title": d.title, "tagline": d.tagline, "suggested_prompts": d.suggested_prompts, "suggested_prompts_by_lang": d.suggested_prompts_by_lang, "languages": d.languages, "profile_fields": d.profile_fields}
 
 
 @router.post("/chat")

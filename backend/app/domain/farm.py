@@ -22,6 +22,7 @@ PERSONA = (
     "If CONTEXT says SOURCE UNAVAILABLE or FAILED, say plainly that this live source is not reachable right now and do NOT estimate. "
     "If CONTEXT says MISSING INFO, ask the farmer for exactly that, in one friendly question. "
     "When CONTEXT has a computed SIGNAL, DECISION or RISK FLAG, state it as given and explain why using the numbers; never overrule it. "
+    "Only advise actions that CONTEXT names (sell, hold, spray, irrigate, protect the crop). Never add harvest, sowing or storage advice of your own, even for dry days. "
     "You give decision support, not guarantees: never promise profit or yield. "
     "Do not recommend pesticide doses or brands; say to follow the product label and local agriculture officer. "
     "Do not give phone numbers. Never read out web addresses; name the source briefly instead. "
@@ -86,6 +87,10 @@ DOMAIN = Domain(
         "kn": "ಈಗ ನಾನು ವಿಶ್ವಾಸಾರ್ಹ ಉತ್ತರ ನೀಡಲು ಸಾಧ್ಯವಾಗುತ್ತಿಲ್ಲ. ದಯವಿಟ್ಟು ಹತ್ತಿರದ ಕೃಷಿ ವಿಜ್ಞಾನ ಕೇಂದ್ರ (KVK) ಅಥವಾ ಕೃಷಿ ಅಧಿಕಾರಿಯನ್ನು ಕೇಳಿ, ಕೆಲವು ನಿಮಿಷಗಳ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
         "bn": "এই মুহূর্তে আমি নির্ভরযোগ্য উত্তর দিতে পারছি না। অনুগ্রহ করে আপনার কাছের কৃষি বিজ্ঞান কেন্দ্র (KVK) বা কৃষি কর্মকর্তাকে জিজ্ঞাসা করুন, এবং কয়েক মিনিট পরে আবার চেষ্টা করুন।",
         "ml": "ഇപ്പോൾ എനിക്ക് വിശ്വസനീയമായ മറുപടി നൽകാൻ കഴിയുന്നില്ല. ദയവായി നിങ്ങളുടെ അടുത്തുള്ള കൃഷി വിജ്ഞാന കേന്ദ്രത്തോട് (KVK) അല്ലെങ്കിൽ കൃഷി ഓഫീസറോട് ചോദിക്കുക, ഏതാനും മിനിറ്റുകൾക്കു ശേഷം വീണ്ടും ശ്രമിക്കുക.",
+    },
+    suggested_prompts_by_lang={
+        "hi": ["क्या मुझे अपनी फसल अभी बेचनी चाहिए या रुकना चाहिए?", "क्या अगले कुछ दिनों में दवा छिड़कना सुरक्षित है?", "इस हफ्ते मेरे खेत के लिए मौसम का क्या जोखिम है?", "आज मेरी फसल का मंडी भाव क्या है?"],
+        "mr": ["मी माझे पीक आता विकू की थांबू?", "पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "या आठवड्यात माझ्या शेतासाठी हवामानाचा धोका काय आहे?", "आज माझ्या पिकाचा बाजारभाव काय आहे?"],
     },
     suggested_prompts=[
         "Should I sell my crop now or wait?",

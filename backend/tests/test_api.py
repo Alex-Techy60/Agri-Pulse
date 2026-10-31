@@ -18,3 +18,9 @@ def test_api_endpoints():
         assert r["answer"] and r["trace"]
         raw = c.post("/api/chat/stream", json={"message": "hi", "profile": {}}).text
         assert raw.count("data: ") >= 2 and '"type": "final"' in raw
+
+
+def test_localized_suggested_prompts_are_for_supported_languages_and_match_the_english_count():
+    from app.domain.farm import DOMAIN
+    assert set(DOMAIN.suggested_prompts_by_lang) <= set(DOMAIN.languages)
+    assert all(len(v) == len(DOMAIN.suggested_prompts) for v in DOMAIN.suggested_prompts_by_lang.values())
