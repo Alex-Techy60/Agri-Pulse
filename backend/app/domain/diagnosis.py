@@ -51,6 +51,7 @@ def parse_diagnosis(text: str) -> dict | None:
     summary = (
         f"IMAGE ASSESSMENT (visual only, from the farmer's photo): crop {crop.strip()[:60]}; severity {sev}; "
         f"symptoms: {'; '.join(symptoms) or 'none visible'}; possible causes: {'; '.join(causes) or 'cannot tell from the photo'}. "
+        "The photo has ALREADY been received and analysed: never ask the farmer to send or describe a photo. If the crop seen differs from the farmer's crop, say that plainly and still report what is visible. "
         "Say 'from your photo' and never repeat the label IMAGE ASSESSMENT. Advise the farmer to confirm with the local KVK / agriculture officer. Do not recommend pesticides, brands or doses."
     )
     card = {

@@ -256,7 +256,8 @@ class Orchestrator:
         try:
             if self.store.count(KNOWLEDGE):
                 kb = self.store.search(KNOWLEDGE, text)
-            mem = self.store.search(MEMORY, text, k=2, session_id=session_id)
+            if session_id != "default":  # the shared anonymous session must never see another caller's questions
+                mem = self.store.search(MEMORY, text, k=2, session_id=session_id)
         except Exception as e:
             yield step("Retriever", "search", f"failed: {e}", t0, ok=False)
         else:
@@ -320,14 +321,15 @@ class Orchestrator:
                     self.profiles.move_to_end(session_id)
                     while len(self.profiles) > 1000:
                         self.profiles.popitem(last=False)
-        with self._lock:
-            self.history[session_id].extend([{"role": "user", "content": text}, {"role": "assistant", "content": answer}])
-            while len(self.history) > HISTORY_MAX_SESSIONS:  # oldest session first (dicts keep insertion order)
-                self.history.pop(next(iter(self.history)))
-        try:
-            self.store.remember(session_id, f"User asked: {text[:200]}")
-        except Exception:
-            pass
+        if session_id != "default":  # no history or memory for the shared anonymous session: it would leak between callers
+            with self._lock:
+                self.history[session_id].extend([{"role": "user", "content": text}, {"role": "assistant", "content": answer}])
+                while len(self.history) > HISTORY_MAX_SESSIONS:  # oldest session first (dicts keep insertion order)
+                    self.history.pop(next(iter(self.history)))
+            try:
+                self.store.remember(session_id, f"User asked: {text[:200]}")
+            except Exception:
+                pass
 
         yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved)}
 
@@ -359,7 +361,7 @@ class Orchestrator:
             f"CONTEXT:\n{context}\n" + (f"\nWHAT YOU REMEMBER ABOUT THIS USER:\n{memory_ctx}\n" if memory_ctx else "")
         )
         with self._lock:
-            past = list(self.history[session_id])
+            past = [] if session_id == "default" else list(self.history[session_id])
         return [{"role": "system", "content": system}, *past, {"role": "user", "content": text}]
 
     @staticmethod

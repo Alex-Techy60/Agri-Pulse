@@ -101,6 +101,6 @@ DOMAIN = Domain(
     languages={"en": "English", "hi": "हिन्दी", "mr": "मराठी", "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ", "ta": "தமிழ்", "te": "తెలుగు", "kn": "ಕನ್ನಡ", "bn": "বাংলা", "ml": "മലയാളം"},
     profile_fields=[
         {"key": "place", "label": "Village / town (e.g. Nashik, Maharashtra)", "placeholder": "Nashik, Maharashtra"},
-        {"key": "crop", "label": "Crop", "placeholder": "Onion", "options": sorted({k.title() for k in ALIASES})},
+        {"key": "crop", "label": "Crop", "placeholder": "Onion", "options": sorted({k.title() for k in {v: k for k, v in reversed(ALIASES.items())}.values()})},  # one name per commodity: no Soybean AND Soyabean
     ],
 )

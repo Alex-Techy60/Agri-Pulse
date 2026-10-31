@@ -185,7 +185,8 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         span = f"in the last {s.mandi_days} days" if hist_complete else "today (earlier days could not be checked: the history source did not respond)"
         return ToolResult(
             f"MANDI PRICES: no published records for {commodity} in {where} {span} "
-            f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices.",
+            f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices."
+            + (" The source answered normally and simply holds no records for this crop, so never say it is unreachable; suggest checking the crop name." if hist_complete else ""),
             True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 

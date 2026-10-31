@@ -99,6 +99,7 @@ def test_mandi_no_records_says_so():
     install(lambda url, p: GEO if "geocoding" in url else {"records": []})
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
     assert r.ok and "no published records" in r.text and "do not estimate" in r.text
+    assert "never say it is unreachable" in r.text  # the source answered: only the crop has no rows
 
 
 def test_cross_check_tool():
@@ -485,3 +486,18 @@ def test_a_crop_that_always_reports_from_few_markets_is_not_treated_as_partial()
     kept, note = without_partial_day(norm({"02/11/2026": [2500] * 10, "03/11/2026": [2500] * 4}))
     assert note == {"date": "2026-11-03", "markets": 4, "used": "2026-11-02"} and len(kept) == 10
     assert without_partial_day(norm({"03/11/2026": [2500]}))[1] is None  # a single day is all there is
+
+
+def test_district_names_the_geocoder_lacks_are_searched_under_a_name_it_knows():
+    import app.tools.location as loc_mod
+
+    asked = []
+
+    def routes(url, p):
+        asked.append(p["name"])
+        return {"results": [{"name": p["name"], "latitude": 1.0, "longitude": 2.0, "admin1": "Maharashtra", "admin2": "X", "population": 1}]}
+
+    install(routes)
+    for typed, searched in [("Raigad", "Alibag"), ("Buldhana, Maharashtra", "Buldana"), ("Chhatrapati Sambhajinagar", "Aurangabad")]:
+        assert loc_mod.resolve_location({"place": typed})["state"] == "Maharashtra"
+        assert asked[-1] == searched

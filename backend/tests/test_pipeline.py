@@ -168,3 +168,16 @@ def test_keyword_router_understands_marathi_and_hindi_when_the_llm_is_down():
                        ("पुढील काही दिवसांत फवारणी करणे सुरक्षित आहे का?", "weather_advice"), ("क्या आज दवा छिड़कना सुरक्षित है?", "weather_advice"),
                        ("या आठवड्यात पाऊस पडेल का?", "weather_advice")]:
         assert o._route(text, None)[0].name == want, text
+
+
+def test_anonymous_default_session_shares_no_history_or_memory():
+    o = Orchestrator(domain(["good"]), FakeLLM(["Rain 70.2 mm."]), StubStore())
+    o.run("will it rain?", profile={"place": "Nashik"})
+    llm = FakeLLM(["Rain 70.2 mm."])
+    o.llm = llm
+    o.run("and tomorrow?", profile={"place": "Nashik"})
+    roles = [m["role"] for m in llm.last_messages]
+    assert roles == ["system", "user"]  # no earlier caller's turns
+    o.run("hello", session_id="farmer-1", profile={"place": "Nashik"})
+    o.run("and tomorrow?", session_id="farmer-1", profile={"place": "Nashik"})
+    assert [m["role"] for m in llm.last_messages] == ["system", "user", "assistant", "user"]  # a real session keeps its turns

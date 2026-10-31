@@ -133,6 +133,9 @@ def block_interval(parts: list[list[dict]], key: str, reps: int = 3000, seed: in
 
 
 def main(argv: list[str]) -> None:
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__)
+        return
     cache, days, names = None, 365, []
     it = iter(argv)
     for a in it:
@@ -140,8 +143,10 @@ def main(argv: list[str]) -> None:
             cache = Path(next(it))
         elif a == "--days":
             days = int(next(it))
-        else:
+        elif a.count("/") == 1 and not a.startswith("-"):
             names.append(a)
+        else:
+            sys.exit(f"unrecognised argument {a!r}: use [--cache DIR] [--days N] [State/Commodity ...] (see --help)")
     tests = {}
     for name in names or DEFAULT:
         state, commodity = name.split("/")

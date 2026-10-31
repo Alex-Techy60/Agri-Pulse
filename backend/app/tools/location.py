@@ -43,6 +43,8 @@ FILLER = {"india", "district", "dist", "tehsil", "taluka", "taluk", "tal", "vill
 # returns the right state ("Gurgaon" alone otherwise resolves to a village in Hingoli, Maharashtra; "Panaji" has no Goa entry).
 GEO_NAMES = {
     "ahmednagar": "Ahilyanagar", "panaji": "Panjim", "bangalore": "Bengaluru", "allahabad": "Prayagraj", "gurgaon": "Gurugram",
+    # District names the geocoder does not list (checked live 31 Oct 2026): the district's own town, or the old name.
+    "buldhana": "Buldana", "raigad": "Alibag", "chhatrapati sambhajinagar": "Aurangabad", "sambhajinagar": "Aurangabad",
 }
 
 
