@@ -7,6 +7,9 @@ python-multipart>=0.0.9
 httpx>=0.27
 qdrant-client>=1.9
 numpy>=1.26
+google-auth>=2.29  # verifies Google ID tokens (Sign in with Google)
+psycopg[binary,pool]>=3.1  # hosted Postgres (DATABASE_URL); SQLite is used when it is unset
+requests>=2.31  # transport used by google-auth
 # optional, better embeddings (downloads a model on first run):
 # fastembed>=0.3
 pytest>=8.0

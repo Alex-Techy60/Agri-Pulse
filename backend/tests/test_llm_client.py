@@ -199,3 +199,127 @@ def test_a_segment_that_loops_on_one_phrase_is_dropped_but_ordinary_speech_with_
     ordinary = {"segments": [{"text": "Should I sell my onions now?", "avg_logprob": -0.14, "no_speech_prob": 0, "compression_ratio": 0.79}]}
     assert speech_text(looping) == "" and speech_text(ordinary) == "Should I sell my onions now?"
     assert speech_text({"segments": [{"text": "a", "compression_ratio": 3.0}, {"text": "kept", "compression_ratio": 1.2}]}) == "kept"
+
+
+def test_deadline_stops_the_provider_ladder_and_returns_offline_text():
+    """A request past its deadline must not wait on another slow provider (the UI gives up at 90 s)."""
+    import time
+
+    import httpx
+
+    hits = []
+
+    def handler(req):
+        hits.append(req.url.host)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "late"}}]})
+
+    s = Settings(llm_api_key="k", llm_base_url="https://primary.test/v1", fallback_api_key="k2", fallback_base_url="https://fb.test/v1", fallback_model="m")
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], offline="OFF", deadline=time.time() - 1)
+    assert r.provider == "offline" and r.text == "OFF" and hits == []
+    # a deadline that has not passed changes nothing
+    ok = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], deadline=time.time() + 60)
+    assert ok.text == "late" and hits == ["primary.test"]
+
+
+def _rotation_settings(**kw):
+    from app.core.config import Settings
+    return Settings(llm_api_key="k1", llm_extra_api_keys=" k2, ,k3,k1", llm_base_url="https://primary.test/v1", **kw)
+
+
+def test_extra_keys_are_listed_once_and_in_order():
+    from app.core.config import llm_keys
+    assert llm_keys(_rotation_settings()) == ["k1", "k2", "k3"]
+    assert llm_keys(Settings(llm_api_key="")) == []
+    assert llm_keys(Settings(llm_api_key="", llm_extra_api_keys="x")) == ["x"]
+
+
+def test_spent_key_rotates_to_next_key_and_is_not_retried(monkeypatch):
+    """Daily quota gone on key 1 (429): key 2 answers on the same model, and the next request skips key 1."""
+    import httpx
+
+    import app.llm.client as c
+
+    monkeypatch.setattr(c, "_parked", {})
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    seen = []
+
+    def handler(req):
+        key = req.headers["authorization"].split()[-1]
+        seen.append((key, json.loads(req.content)["model"]))
+        if key == "k1":
+            return httpx.Response(429, json={"error": {"message": "tokens per day"}}, headers={"retry-after": "600"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from k2"}}]})
+
+    llm = LLMClient(_rotation_settings(), transport=httpx.MockTransport(handler))
+    r = llm.chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from k2" and r.provider == "primary" and not r.degraded
+    assert seen == [("k1", "openai/gpt-oss-120b"), ("k2", "openai/gpt-oss-120b")]
+    seen.clear()
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert seen == [("k2", "openai/gpt-oss-120b")]  # key 1 is parked for this model
+
+
+def test_all_keys_spent_falls_through_to_reserve_model_then_offline(monkeypatch):
+    import httpx
+
+    import app.llm.client as c
+
+    monkeypatch.setattr(c, "_parked", {})
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+
+    def handler(req):
+        return httpx.Response(429, json={"error": "limit"})
+
+    r = LLMClient(_rotation_settings(), transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}], offline="OFF")
+    assert r.provider == "offline" and r.text == "OFF"
+    assert "k1" not in r.error and "k2" not in r.error  # keys never appear in errors or logs
+
+
+def test_fallback2_and_fallback3_catch_when_fallback1_also_fails():
+    """FALLBACK2 and FALLBACK3 entries are tried in order when every earlier provider fails."""
+    import httpx
+
+    hits: list[str] = []
+
+    def handler(req):
+        host = req.url.host
+        hits.append(host)
+        if host in ("primary.test", "fb1.test", "fb2.test"):
+            return httpx.Response(429, json={"error": "rate"})
+        # fb3.test answers
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from fallback3"}}]})
+
+    s = Settings(
+        llm_api_key="k", llm_base_url="https://primary.test/v1",
+        fallback_api_key="k2", fallback_base_url="https://fb1.test/v1", fallback_model="m1",
+        fallback2_api_key="k3", fallback2_base_url="https://fb2.test/v1", fallback2_model="m2",
+        fallback3_api_key="k4", fallback3_base_url="https://fb3.test/v1", fallback3_model="m3",
+    )
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from fallback3" and r.provider == "fallback3" and r.degraded
+    assert "fb3.test" in hits  # the third fallback was actually reached
+
+
+def test_fallback2_is_reached_before_fallback3_and_short_circuits():
+    """When FALLBACK2 succeeds, FALLBACK3 is never called."""
+    import httpx
+
+    hits: list[str] = []
+
+    def handler(req):
+        host = req.url.host
+        hits.append(host)
+        if host in ("primary.test", "fb1.test"):
+            return httpx.Response(429, json={"error": "rate"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "from fb2"}}]})
+
+    s = Settings(
+        llm_api_key="k", llm_base_url="https://primary.test/v1",
+        fallback_api_key="k2", fallback_base_url="https://fb1.test/v1", fallback_model="m1",
+        fallback2_api_key="k3", fallback2_base_url="https://fb2.test/v1", fallback2_model="m2",
+        fallback3_api_key="k4", fallback3_base_url="https://fb3.test/v1", fallback3_model="m3",
+    )
+    r = LLMClient(s, transport=httpx.MockTransport(handler)).chat([{"role": "user", "content": "hi"}])
+    assert r.text == "from fb2" and r.provider == "fallback2" and r.degraded
+    assert "fb3.test" not in hits  # fallback3 was never contacted
+

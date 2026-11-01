@@ -49,6 +49,8 @@ export default function Profile({ fields, profile, onChange, lang, onLocate, loc
       </div>
       {crops.length > 0 && (
         <div className="crops" role="radiogroup" aria-label={t.pickCrop}>
+          {/* No crop selected: the farmer names the crop in the question. The server already prefers the crop in the question. */}
+          <button type="button" role="radio" aria-checked={!profile.crop} className={!profile.crop ? "crop on" : "crop"} onClick={() => onChange("crop", "")}><i aria-hidden="true">∅</i>{t.anyCrop}</button>
           {crops.map((c) => {
             const on = String(profile.crop || "").toLowerCase() === c.toLowerCase();
             return <button key={c} type="button" role="radio" aria-checked={on} className={on ? "crop on" : "crop"} onClick={() => onChange("crop", c)}><i aria-hidden="true">{icon(c)}</i>{c}</button>;

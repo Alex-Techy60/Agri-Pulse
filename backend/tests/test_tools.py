@@ -100,6 +100,8 @@ def test_mandi_no_records_says_so():
     install(lambda url, p: GEO if "geocoding" in url else {"records": []})
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
     assert r.ok and "no published records" in r.text and "do not estimate" in r.text
+    notice = [c for c in r.cards if c["type"] == "notice"]
+    assert len(notice) == 1 and notice[0]["kind"] == "no_prices" and notice[0]["crop"] and notice[0]["state"]  # visible next to the forecast, not only in the text
     assert "never say it is unreachable" in r.text  # the source answered: only the crop has no rows
 
 
@@ -589,3 +591,14 @@ def test_empty_record_lists_are_cached_only_briefly_but_real_data_keeps_the_norm
     http._cache.clear(); c.data = {"records": [{"x": 1}]}
     http.get_json("https://api.data.gov.in/resource/x", {"a": 1}, ttl=1800)
     assert next(iter(http._cache.values()))[2] is None
+
+
+def test_flat_prices_are_shown_to_the_model_as_steady_never_as_neutral(monkeypatch):
+    from app.decision import price_rules
+
+    monkeypatch.setattr(price_rules, "TREND_BAND_PCT", 1000.0)  # any move is "flat"
+    monkeypatch.setattr(mandi_mod, "TREND_BAND_PCT", 1000.0)
+    install(routes_ok)
+    r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
+    sig_line = next(l for l in r.text.splitlines() if l.startswith("SIGNAL"))
+    assert r.facts["price"]["signal"] == "NEUTRAL" and "STEADY" in sig_line and "NEUTRAL" not in sig_line

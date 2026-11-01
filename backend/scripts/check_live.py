@@ -9,7 +9,7 @@ import sys
 
 import httpx
 
-from app.core.config import get_settings
+from app.core.config import get_settings, llm_keys
 from app.tools import NeedsInput
 from app.tools.http import get_json
 from app.tools.mandi import API, mandi
@@ -18,30 +18,35 @@ from app.tools.weather import weather
 
 
 def llm_quota(s) -> int:
-    """Send a 1-token request to each Groq model: the free daily token quota is the likeliest way a demo goes slow.
+    """Send a 1-token request to each Groq model with each key: the free daily token quota is the likeliest way a demo goes slow.
 
-    Returns the number of models that cannot answer. The 429 text is reduced to its Limit/Used figures (it also names the organisation).
+    Returns the number of models that NO key can answer (the app rotates to the next key on its own). The 429 text is
+    reduced to its Limit/Used figures (it also names the organisation); keys are shown by position only.
     """
-    if not s.llm_api_key:
+    keys = llm_keys(s)
+    if not keys:
         print("LLM_API_KEY not set: answers will be 'live data only'.")
         return 0
     failing = 0
     for label, model in (("main", s.llm_model), ("reserve/router", s.llm_fast_model)):
-        try:
-            r = httpx.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {s.llm_api_key}"},
-                           json={"model": model, "messages": [{"role": "user", "content": "ok"}], "max_tokens": 16, "reasoning_effort": "low"} if model.startswith("openai/gpt-oss")
-                           else {"model": model, "messages": [{"role": "user", "content": "ok"}], "max_tokens": 1}, timeout=20)
-            if r.status_code == 429:
-                m = re.search(r"\((\w+)\): Limit (\d+), Used (\d+)", r.text)
-                print(f"FAIL LLM {label} ({model}): quota spent" + (f" - {m.group(1)} limit {m.group(2)}, used {m.group(3)}" if m else " - rate limited"))
-                failing += 1
-            elif r.is_success:
-                print(f"PASS LLM {label} ({model}): answers")
-            else:
-                print(f"FAIL LLM {label} ({model}): HTTP {r.status_code}")
-                failing += 1
-        except Exception as e:
-            print(f"FAIL LLM {label} ({model}): {type(e).__name__}")
+        body = ({"model": model, "messages": [{"role": "user", "content": "ok"}], "max_tokens": 16, "reasoning_effort": "low"} if model.startswith("openai/gpt-oss")
+                else {"model": model, "messages": [{"role": "user", "content": "ok"}], "max_tokens": 1})
+        answered = 0
+        for n, key in enumerate(keys, 1):
+            tag = f"{label} ({model}), key {n}/{len(keys)}"
+            try:
+                r = httpx.post(f"{s.llm_base_url.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body, timeout=20)
+                if r.status_code == 429:
+                    m = re.search(r"\((\w+)\): Limit (\d+), Used (\d+)", r.text)
+                    print(f"FAIL LLM {tag}: quota spent" + (f" - {m.group(1)} limit {m.group(2)}, used {m.group(3)}" if m else " - rate limited"))
+                elif r.is_success:
+                    print(f"PASS LLM {tag}: answers")
+                    answered += 1
+                else:
+                    print(f"FAIL LLM {tag}: HTTP {r.status_code}")
+            except Exception as e:
+                print(f"FAIL LLM {tag}: {type(e).__name__}")
+        if not answered:
             failing += 1
     return failing
 

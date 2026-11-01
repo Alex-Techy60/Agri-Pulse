@@ -241,7 +241,10 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
             f"MANDI PRICES: no published records for {commodity} in {where} {span} "
             f"(source: data.gov.in Agmarknet). Say honestly that no price data is available; do not estimate prices, do not call prices neutral or steady, and give no sell or hold view."
             + (" The source answered normally and simply holds no records for this crop, so never say it is unreachable; suggest checking the crop name." if hist_complete else ""),
-            True, sources, [], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
+            True, sources,
+            # a card, so the gap is visible next to the forecast: the most important fact must not hide in folded text
+            [{"type": "notice", "kind": "no_prices", "crop": commodity, "state": where, "days": s.mandi_days, "complete": bool(hist_complete)}],
+            {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": {"signal": "INSUFFICIENT_DATA", "points": 0}},
         )
 
     sig = trend_signal(all_recs)
@@ -264,9 +267,10 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
         lines.append(f"NOTE: only {partial['markets']} price report(s) have come in for {partial['date']} so far, so the latest COMPLETE day, {partial['used']}, is used for everything below. Mention that today's prices are still arriving.")
     if sig["signal"] != "INSUFFICIENT_DATA":
         word = {"HOLD": "prices are RISING", "SELL_NOW": "prices are FALLING", "NEUTRAL": "prices are roughly STEADY"}[sig["signal"]]
+        shown = "STEADY" if sig["signal"] == "NEUTRAL" else sig["signal"]  # the model repeats whatever label it sees; NEUTRAL is banned in answers
         lines.append(
-            f"SIGNAL (computed in code): {sig['signal']} - {word}: the same {sig['markets_compared']} markets moved {sig['change_pct']} % between {sig['compared_with']} and {sig['latest_date']} "
-            f"({sig['window_days']} days). Rule: a rise of {TREND_BAND_PCT:g} % or more = HOLD, a fall of {TREND_BAND_PCT:g} % or more = SELL_NOW, otherwise NEUTRAL. "
+            f"SIGNAL (computed in code): {shown} - {word}: the same {sig['markets_compared']} markets moved {sig['change_pct']} % between {sig['compared_with']} and {sig['latest_date']} "
+            f"({sig['window_days']} days). Rule: a rise of {TREND_BAND_PCT:g} % or more = HOLD, a fall of {TREND_BAND_PCT:g} % or more = SELL_NOW, otherwise STEADY. "
             f"This is a recent trend, not a forecast. {trend_evidence(commodity, sig['signal'])} Say that in one or two short sentences."
         )
     else:
@@ -316,7 +320,7 @@ def get_cross_check(profile: dict, text: str = "") -> ToolResult:
         lines = [f"DECISION (computed in code): NO PRICE TREND (no comparable day about a week earlier); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
     else:
         what = {"HOLD": "prices rising", "SELL_NOW": "prices falling", "NEUTRAL": "prices roughly steady"}.get(decision, decision)
-        lines = [f"DECISION (computed in code): {decision} ({what}, {price.get('change_pct')} % in {price.get('window_days')} days; a recent trend, not a forecast)"]
+        lines = [f"DECISION (computed in code): {'STEADY' if decision == 'NEUTRAL' else decision} ({what}, {price.get('change_pct')} % in {price.get('window_days')} days; a recent trend, not a forecast)"]
     lines += [f"NOTE: {n}" for n in notes]
     return ToolResult("\n".join(lines), True, [], [], {"decision": decision, "notes": notes})
 

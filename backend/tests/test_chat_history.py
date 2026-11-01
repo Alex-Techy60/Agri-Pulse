@@ -1,4 +1,6 @@
 """Saved chats: one history per person, resumable, deletable. No network, no keys; each test gets its own SQLite file."""
+import os
+
 import pytest
 
 from app.agents.orchestrator import Orchestrator
@@ -10,9 +12,22 @@ ALICE_ID, BOB_ID = "a" * 32, "b" * 32
 ALICE, BOB = owner_key(ALICE_ID), owner_key(BOB_ID)
 
 
-@pytest.fixture
-def store(tmp_path):
-    return ChatStore(tmp_path / "chats.db")
+@pytest.fixture(params=["sqlite", "postgres"])
+def store(request, tmp_path):
+    """Every store test runs on SQLite, and on Postgres too when TEST_DATABASE_URL points at a throwaway database
+    (e.g. `docker run -e POSTGRES_PASSWORD=pw -p 55432:5432 postgres:16`; the tables are wiped before each test)."""
+    if request.param == "sqlite":
+        yield ChatStore(tmp_path / "chats.db")
+        return
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set")
+    st = ChatStore(database_url=url)
+    with st._db() as db:
+        for t in ("feedback", "messages", "chats", "users"):
+            db.execute(f"DELETE FROM {t}")
+    yield st
+    st._pool.close()
 
 
 # ----------------------------------------------------------------- the store
@@ -190,8 +205,8 @@ def test_deleting_a_chat_deletes_its_feedback(store):
     mid = store.append_turn(ALICE, "chat-0001", "q", "a", {})
     store.set_feedback(ALICE, mid, "up")
     store.delete_chat(ALICE, "chat-0001")
-    import sqlite3
-    assert sqlite3.connect(store.path).execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
+    with store._db() as db:
+        assert db.execute("SELECT COUNT(*) AS n FROM feedback").fetchone()["n"] == 0
 
 
 def test_feedback_route_end_to_end(client):
@@ -204,3 +219,42 @@ def test_feedback_route_end_to_end(client):
     assert client.put("/api/feedback", json={"message_id": mid, "value": "maybe"}, headers=h(ALICE_ID)).status_code == 422
     assert client.put("/api/feedback", json={"message_id": mid, "value": "up"}).status_code == 400  # no client id
     assert client.put("/api/feedback", json={"message_id": mid, "value": None}, headers=h(ALICE_ID)).status_code == 200
+
+
+def test_users_are_remembered_and_updated_on_each_sign_in(store):
+    store.record_user({"sub": "g-1", "email": "a@x.com", "name": "A", "picture": ""})
+    store.record_user({"sub": "g-1", "email": "a@x.com", "name": "A Renamed", "picture": ""})
+    store.record_user({"sub": "g-2", "email": "b@x.com", "name": "B", "picture": ""})
+    assert store.count_users() == 2
+
+
+def test_unreachable_postgres_falls_back_to_sqlite(monkeypatch, tmp_path):
+    import app.memory.chats as chats
+    monkeypatch.setattr(chats, "_store", None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/none")  # nothing listens on port 1
+    monkeypatch.setenv("CHAT_DB_PATH", str(tmp_path / "fallback.db"))
+    chats.get_settings.cache_clear()
+    st = chats.get_chats()
+    assert st.dialect == "sqlite" and st.append_turn(owner_key(ALICE_ID), "chat-0001", "hi", "hello") is not None
+    monkeypatch.setattr(chats, "_store", None)
+    chats.get_settings.cache_clear()
+
+
+def test_adopt_moves_chats_messages_and_feedback_to_the_account(store):
+    mid = store.append_turn(ALICE, "chat-0001", "q", "a", {})
+    store.set_feedback(ALICE, mid, "up")
+    assert store.adopt(ALICE, BOB) == 1
+    assert store.list_chats(ALICE) == [] and [c["id"] for c in store.list_chats(BOB)] == ["chat-0001"]
+    assert store.get_chat(BOB, "chat-0001")["messages"][1]["feedback"] == "up"
+    assert store.adopt(BOB, BOB) == 0
+
+
+def test_prefs_roundtrip_and_adopt_keeps_the_accounts_own(store):
+    assert store.load_prefs(ALICE) == {}
+    assert store.save_prefs(ALICE, {"lang": "mr"}) and store.save_prefs(ALICE, {"lang": "hi", "rate": 1.25})
+    assert store.load_prefs(ALICE) == {"lang": "hi", "rate": 1.25}
+    store.adopt(ALICE, BOB)                       # BOB has none: takes ALICE's
+    assert store.load_prefs(BOB)["lang"] == "hi" and store.load_prefs(ALICE) == {}
+    store.save_prefs(ALICE, {"lang": "ta"})
+    store.adopt(ALICE, BOB)                       # BOB already has settings: they win
+    assert store.load_prefs(BOB)["lang"] == "hi" and store.load_prefs(ALICE) == {}

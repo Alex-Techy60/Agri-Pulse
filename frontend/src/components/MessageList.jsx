@@ -36,6 +36,7 @@ export default function MessageList({ msgs, chatId, busy, step, lang, prompts, o
     const switched = lastChat.current !== chatId; // opening another chat always lands on its latest message
     lastChat.current = chatId;
     const mine = msgs.length && msgs[msgs.length - 1].role === "user";
+    if (!msgs.length) return; // the welcome screen starts at its heading: scrolling to its end hid the title on first load
     if (switched || mine || atBottom.current) endRef.current?.scrollIntoView({ block: "end" }); // instant: following a stream of steps with animations would lag behind them
   }, [msgs, chatId, busy]);
 

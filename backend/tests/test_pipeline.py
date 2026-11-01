@@ -217,3 +217,25 @@ def test_offline_answer_is_flagged_live_only_and_never_cut_mid_line():
     text = "line one 2026-10-22: Rs 7248\nline two 2026-10-23: Rs 7147\nline three"
     assert _cut_at_line(text, 40) == "line one 2026-10-22: Rs 7248"
     assert _cut_at_line("short", 40) == "short"
+
+
+def _multilingual():
+    d = domain(["good"])
+    d.languages = {"en": "English", "hi": "Hindi", "mr": "Marathi", "ta": "Tamil"}
+    return d
+
+
+def test_native_script_question_overrides_the_ui_default_language():
+    """The UI always sends its language, and "en" is its default: a Tamil question must still get a Tamil reply."""
+    tamil = "நாளை மழை பெய்யுமா? rain"
+    off = lambda: FakeLLM(["ok"], off=True)  # noqa: E731
+    assert Orchestrator(_multilingual(), off(), StubStore()).run(tamil, language="en", profile={"place": "Nashik"}).language == "ta"
+    # a Latin-script question with "en" stays English, and a deliberately chosen non-English language is respected
+    assert Orchestrator(_multilingual(), off(), StubStore()).run("will it rain?", language="en", profile={"place": "Nashik"}).language == "en"
+    assert Orchestrator(_multilingual(), off(), StubStore()).run(tamil, language="hi", profile={"place": "Nashik"}).language == "hi"
+
+
+def test_router_guess_of_english_is_corrected_for_native_script_text():
+    """The router LLM sometimes answers language "en" for a Marathi question; the script of the text decides."""
+    r = Orchestrator(_multilingual(), FakeLLM(["ok"]), StubStore()).run("मी माझा कांदा आता विकू का?", language="en", profile={"place": "Nashik"})
+    assert r.language == "mr"  # FakeLLM's router says "en"

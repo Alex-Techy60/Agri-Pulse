@@ -16,12 +16,32 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, get_settings, llm_keys
 
 log = logging.getLogger("llm")
 
 MIN_REASONING_TOKENS = 400
 _DROPPED = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)  # not timeouts: retrying those would double a 25 s wait
+
+# A key whose quota is spent answers 429 (daily limit) or 401 (revoked) on every call: park it, so the next request goes
+# straight to the next key instead of paying a failed call first. Keyed by (key, model): Groq counts quota per model.
+_parked: dict[tuple[str, str], float] = {}
+PARK_DEFAULT_S, PARK_MAX_S = 60.0, 3600.0
+
+
+def _park(key: str, model: str, r: httpx.Response) -> None:
+    try:
+        wait = float(r.headers.get("retry-after", PARK_DEFAULT_S))
+    except ValueError:
+        wait = PARK_DEFAULT_S
+    _parked[(key, model)] = time.time() + min(max(wait, PARK_DEFAULT_S), PARK_MAX_S)
+
+
+def _usable(keys: list[str], model: str) -> list[tuple[int, str]]:
+    """(position, key) pairs not parked for this model; if every key is parked, all of them (one may have recovered)."""
+    now = time.time()
+    live = [(i, k) for i, k in enumerate(keys) if _parked.get((k, model), 0) <= now]
+    return live or list(enumerate(keys))
 
 
 @dataclass
@@ -51,21 +71,36 @@ class LLMClient:
         max_tokens: int = 700,
         offline: str = "I'm having trouble reaching my AI service right now. Please try again in a moment.",
         primary_only: bool = False,  # optional steps: a safe default beats waiting on the slow fallback
+        deadline: float | None = None,  # time.time() value: past it no provider is tried, so the caller can still answer in time
     ) -> LLMResult:
         s = self.s
         providers = []
-        if s.llm_api_key:
-            providers.append(("primary", s.llm_base_url, s.llm_api_key, s.llm_fast_model if fast else s.llm_model))
+        keys = llm_keys(s)
+        if keys:
+            main_model = s.llm_fast_model if fast else s.llm_model
+            # every key for the main model first, then every key for the small one (own quota, ~1 s), and only then the
+            # 20-35 s free fallback: a spent key costs one skipped call, not a slow answer.
+            plan = [("primary", main_model)]
             if not fast and s.llm_fast_model != s.llm_model:
-                # Groq limits tokens per model: when the big model's daily quota is spent, the small one
-                # (own quota, ~1 s) still answers, instead of the 20-35 s free fallback.
-                providers.append(("reserve", s.llm_base_url, s.llm_api_key, s.llm_fast_model))
+                plan.append(("reserve", s.llm_fast_model))
+            for name, model in plan:
+                usable = _usable(keys, model)
+                for n, (i, key) in enumerate(usable):
+                    providers.append((name, s.llm_base_url, key, model, i, n == len(usable) - 1))
         if s.fallback_api_key and s.fallback_base_url and s.fallback_model and not primary_only:
-            providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model))
+            providers.append(("fallback", s.fallback_base_url, s.fallback_api_key, s.fallback_model, 0, True))
+        if not primary_only:
+            for n in ("2", "3"):  # optional extra providers: FALLBACK2_*, FALLBACK3_*
+                base, key, model = (getattr(s, f"fallback{n}_{f}") for f in ("base_url", "api_key", "model"))
+                if base and key and model:
+                    providers.append((f"fallback{n}", base, key, model, 0, True))
 
         last_err = "no provider configured (set LLM_API_KEY)"
-        for name, base, key, model in providers:
+        for name, base, key, model, key_no, last_key in providers:
             t0 = time.time()
+            if deadline is not None and deadline - t0 < 3:  # too little time left for any provider to answer
+                last_err = "time budget used up"
+                break
             try:
                 body: dict = {
                     "model": model,
@@ -75,24 +110,29 @@ class LLMClient:
                 }
                 if model.startswith("openai/gpt-oss"):  # reasoning models: reasoning tokens count against max_tokens
                     body["reasoning_effort"] = "low"
-                if name == "fallback" or model.startswith("openai/gpt-oss"):
+                if name.startswith("fallback") or model.startswith("openai/gpt-oss"):
                     # the free fallback reasons too: at the router's 80 tokens it cut JSON off, losing Marathi detection
                     body["max_tokens"] = max(max_tokens, MIN_REASONING_TOKENS)
                 if json_mode:
                     body["response_format"] = {"type": "json_object"}
+                # a slow provider must not outlast the request's deadline (httpx timeout is per read, so cap it)
+                tmo = self.s.llm_timeout_s if deadline is None else max(1.0, min(self.s.llm_timeout_s, deadline - t0))
                 def send():
                     url = f"{base.rstrip('/')}/chat/completions"
                     try:
-                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body)
+                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body, timeout=tmo)
                     except _DROPPED:  # a connection the provider dropped is not an outage: retry before the slow fallback
                         time.sleep(0.5)
-                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body)
+                        return self._http.post(url, headers={"Authorization": f"Bearer {key}"}, json=body, timeout=tmo)
 
                 r = send()
-                wait = _short_retry_after(r) if (r.status_code == 429 and name == "primary") else None
+                # waiting out a burst limit only makes sense on the last key: another key can answer right now
+                wait = _short_retry_after(r) if (r.status_code == 429 and name == "primary" and last_key) else None
                 if wait is not None:  # free-tier burst limit: waiting a moment beats dropping to a slower fallback
                     time.sleep(wait)
                     r = send()
+                if r.status_code in (429, 401, 403) and not name.startswith("fallback"):
+                    _park(key, model, r)
                 r.raise_for_status()
                 data = r.json()
                 text = data["choices"][0]["message"]["content"] or ""
@@ -106,7 +146,7 @@ class LLMClient:
                 )
             except Exception as e:  # network, 429, 5xx, bad JSON...
                 last_err = f"{name}: {type(e).__name__}: {e}"
-                log.warning("LLM %s failed: %s", name, last_err)
+                log.warning("LLM %s (key %d) failed: %s", name, key_no + 1, last_err)  # position only, never the key
 
         return LLMResult(text=offline, provider="offline", degraded=True, error=last_err)
 
@@ -126,46 +166,59 @@ class LLMClient:
             }
         ]
         s = self.s
-        if not s.llm_api_key:
+        keys = llm_keys(s)
+        if not keys:
             return LLMResult(text="", provider="offline", degraded=True, error="no LLM_API_KEY")
         t0 = time.time()
-        try:
-            r = self._http.post(
-                f"{s.llm_base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {s.llm_api_key}"},
-                json={"model": s.llm_vision_model, "messages": msgs, "max_tokens": 500},
-            )
-            r.raise_for_status()
-            text = r.json()["choices"][0]["message"]["content"] or ""
-            return LLMResult(text=text, provider="primary", model=s.llm_vision_model, ms=int((time.time() - t0) * 1000))
-        except Exception as e:
-            return LLMResult(text="", provider="offline", degraded=True, error=f"{type(e).__name__}: {e}")
+        err = ""
+        for _, key in _usable(keys, s.llm_vision_model):
+            try:
+                r = self._http.post(
+                    f"{s.llm_base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={"model": s.llm_vision_model, "messages": msgs, "max_tokens": 500},
+                )
+                if r.status_code in (429, 401, 403):
+                    _park(key, s.llm_vision_model, r)
+                r.raise_for_status()
+                text = r.json()["choices"][0]["message"]["content"] or ""
+                return LLMResult(text=text, provider="primary", model=s.llm_vision_model, ms=int((time.time() - t0) * 1000))
+            except Exception as e:  # try the next key
+                err = f"{type(e).__name__}: {e}"
+        return LLMResult(text="", provider="offline", degraded=True, error=err)
 
     # ----------------------------------------------------------------- audio
     def transcribe(self, audio: bytes, filename: str = "audio.webm", language: str | None = None, prompt: str | None = None) -> str:
         """Speech -> text with Whisper. verbose_json gives per-segment silence scores: on silence or room noise Whisper
         otherwise invents phrases such as "Thank you.", which would be sent on as the farmer's question."""
         s = self.s
-        if not s.llm_api_key:
+        keys = llm_keys(s)
+        if not keys:
             return ""
         data = {"model": s.stt_model, "response_format": "verbose_json", "temperature": "0"}
         if language:
             data["language"] = language
         if prompt:
             data["prompt"] = prompt  # vocabulary hint (crop and market words in the right script); it does not steer the content
-        for attempt in (1, 2):
-            try:
-                r = self._http.post(
-                    f"{s.llm_base_url.rstrip('/')}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {s.llm_api_key}"},
-                    data=data,
-                    files={"file": (filename, audio)},
-                )
-                break
-            except _DROPPED:  # a connection the provider dropped: one retry, as for chat
-                if attempt == 2:
-                    raise
-                time.sleep(0.5)
+        r = None
+        for _, key in _usable(keys, s.stt_model):
+            for attempt in (1, 2):
+                try:
+                    r = self._http.post(
+                        f"{s.llm_base_url.rstrip('/')}/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        data=data,
+                        files={"file": (filename, audio)},
+                    )
+                    break
+                except _DROPPED:  # a connection the provider dropped: one retry, as for chat
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.5)
+            if r.status_code in (429, 401, 403):
+                _park(key, s.stt_model, r)
+                continue  # the next key may still have quota
+            break
         r.raise_for_status()
         return speech_text(r.json())
 

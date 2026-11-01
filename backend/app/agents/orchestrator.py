@@ -77,6 +77,7 @@ NUM_PROFILE_KEYS = ("lat", "lon")
 HISTORY_MAX_SESSIONS = 1000
 OFFLINE_MARK = "(AI summary unavailable - showing live data only)"
 OFFLINE_MAX_CHARS = 6000  # the raw data is folded in the UI, so it can be fuller; it is cut at a line end, never mid-number
+REQUEST_DEADLINE_S = 70.0  # hard stop for LLM calls: the UI gives up at 90 s, so a slow provider chain must end before that
 CORRECTION_BUDGET_S = 45.0  # past this a rejected draft is not rewritten again: on a rate-limited free tier every draft can take 20 s+
 
 
@@ -183,6 +184,9 @@ class Orchestrator:
         t_req = time.time()
         profile = clean_profile(profile)
         if language not in self.domain.languages:  # never let a client-chosen string into the prompt
+            language = None
+        if language == "en" and script_lang(text or "") != "en":
+            # "en" is the UI's default, not a decision: a question typed in Marathi, Tamil... must get its own language back
             language = None
 
         def step(agent, action, detail="", t0=None, ok=True, ms=None) -> dict:
@@ -346,7 +350,7 @@ class Orchestrator:
         answer, warnings = "", []
         for attempt in range(self.s.max_self_corrections + 1):
             t0 = time.time()
-            res = self.llm.chat(messages, offline=self._offline_answer(tool_ctx, kb, missing))
+            res = self.llm.chat(messages, offline=self._offline_answer(tool_ctx, kb, missing), deadline=t_req + REQUEST_DEADLINE_S)
             degraded |= res.degraded
             answer = res.text
             yield step("Specialist", f"draft #{attempt + 1}", f"{res.provider}:{res.model or '-'}", t0, ok=res.provider != "offline")
@@ -382,6 +386,12 @@ class Orchestrator:
             yield step("Guardrail", "fallback", "violations persisted; returned safe answer", None, ok=False)
 
         answer = plain_text(answer, None if roman else self.domain.label_text.get(lang))
+
+        # The question contradicts the form at the top (other crop or place): say so, in code, above the answer.
+        note = self.domain.contradiction_note(ui_profile, over, "en" if roman else lang) if self.domain.contradiction_note and over else ""
+        if note:
+            answer = f"{OFFLINE_MARK}\n\n{note}{answer[len(OFFLINE_MARK):]}" if answer.startswith(OFFLINE_MARK) else f"{note}\n\n{answer}"
+            yield step("Guardrail", "contradiction notice", ", ".join(f"{k}: {ui_profile.get(k)} -> {v}" for k, v in over.items()))
 
         # 6) Remember --------------------------------------------------------------
         if session_id != "default":
@@ -421,6 +431,8 @@ class Orchestrator:
         if isinstance(name, str) and name in intents:  # LLM JSON is untrusted: a list/dict here would crash the `in` check
             guess = data.get("language")
             guess = guess.strip().lower() if isinstance(guess, str) else ""
+            if guess in ("", "en") and script_lang(text) != "en":
+                guess = script_lang(text)  # a question written in a native script is not English, whatever the model says
             if guess in ("hi", "mr"):
                 guess = devanagari_lang(text) or guess  # the LLM mixes the two; unambiguous words in the message decide
             return intents[name], language or (guess if guess in self.domain.languages else "en"), str(data.get("reason", ""))[:120], res.degraded, {"place": _named_place(data.get("place"), text), "crop": _named_place(data.get("crop"), text)}

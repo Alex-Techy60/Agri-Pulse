@@ -6,13 +6,14 @@ import httpx
 from fastapi.concurrency import run_in_threadpool
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.orchestrator import ChatResult, TraceStep, get_orchestrator
 from app.api.ratelimit import enforce
+from app.auth import google as auth
 from app.core import stats
-from app.core.config import get_settings
+from app.core.config import get_settings, llm_keys
 from app.llm.client import get_llm
 from app.memory.chats import CHAT_ID, get_chats, owner_key
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
@@ -23,6 +24,12 @@ router = APIRouter(prefix="/api")
 log = logging.getLogger("api")
 MAX_AUDIO_BYTES = 5_000_000
 MAX_INGEST_TEXTS, MAX_INGEST_CHARS = 50, 5000
+
+
+def _owner(request: Request, client_id: str | None) -> str | None:
+    """Who owns the saved chats: the signed-in Google account if there is one, else the anonymous browser id."""
+    user = auth.read_session(request.cookies.get(auth.COOKIE))
+    return auth.owner_for_user(user) if user else owner_key(client_id)
 
 
 def _error_result(language: str | None) -> dict:
@@ -46,7 +53,7 @@ def health():
     return {
         "status": "ok",
         "domain": s.domain,
-        "llm_configured": bool(s.llm_api_key),
+        "llm_configured": bool(llm_keys(s)),
         "mandi_key_configured": bool(s.data_gov_api_key),
         "fallback_configured": bool(s.fallback_api_key),
         "knowledge_chunks": st.count(KNOWLEDGE),
@@ -90,7 +97,7 @@ def _save_turn(owner: str | None, body: ChatIn, result: dict) -> None:
 @router.post("/chat")
 def chat(body: ChatIn, request: Request, x_client_id: str | None = Header(None)):
     enforce(request, body.session_id)
-    owner = owner_key(x_client_id)
+    owner = _owner(request, x_client_id)
     try:
         result = get_orchestrator().run(body.message, _scoped_session(owner, body), body.language, body.image_b64, body.profile).dict()
     except Exception:
@@ -105,7 +112,7 @@ def chat_stream(body: ChatIn, request: Request, x_client_id: str | None = Header
     """Server-sent events: one `trace` event per pipeline step, then one `final`."""
     enforce(request, body.session_id)
     orch = get_orchestrator()
-    owner = owner_key(x_client_id)
+    owner = _owner(request, x_client_id)
 
     def gen():
         try:
@@ -121,22 +128,22 @@ def chat_stream(body: ChatIn, request: Request, x_client_id: str | None = Header
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def _owner_or_400(x_client_id: str | None) -> str:
-    owner = owner_key(x_client_id)
+def _owner_or_400(request: Request, x_client_id: str | None) -> str:
+    owner = _owner(request, x_client_id)
     if not owner:
         raise HTTPException(400, "Missing or invalid X-Client-Id header.")
     return owner
 
 
 @router.get("/chats")
-def list_chats(x_client_id: str | None = Header(None)):
+def list_chats(request: Request, x_client_id: str | None = Header(None)):
     """This person's saved chats, newest first. Another person's chats are never visible: every query is scoped to the owner."""
-    return {"chats": get_chats().list_chats(_owner_or_400(x_client_id))}
+    return {"chats": get_chats().list_chats(_owner_or_400(request, x_client_id))}
 
 
 @router.get("/chats/{chat_id}")
-def read_chat(chat_id: str, x_client_id: str | None = Header(None)):
-    chat = get_chats().get_chat(_owner_or_400(x_client_id), chat_id)
+def read_chat(chat_id: str, request: Request, x_client_id: str | None = Header(None)):
+    chat = get_chats().get_chat(_owner_or_400(request, x_client_id), chat_id)
     if not chat:
         raise HTTPException(404, "Chat not found.")
     return chat
@@ -147,21 +154,94 @@ class FeedbackIn(BaseModel):
     value: str | None = Field(None, pattern="^(up|down)$")  # null clears the vote
 
 
+class PrefsIn(BaseModel):
+    lang: str | None = Field(None, max_length=8)
+    speak: bool | None = None
+    rate: float | None = Field(None, ge=0.5, le=2)
+    profile: dict[str, str] | None = None
+
+
+@router.get("/settings")
+def read_settings(request: Request, x_client_id: str | None = Header(None)):
+    """Language, profile (place, crop...), read-aloud and speed: kept per person so they follow the account across devices."""
+    return {"settings": get_chats().load_prefs(_owner_or_400(request, x_client_id))}
+
+
+@router.put("/settings")
+def write_settings(body: PrefsIn, request: Request, x_client_id: str | None = Header(None)):
+    owner = _owner_or_400(request, x_client_id)
+    d = get_orchestrator().domain
+    out: dict = {}
+    if body.lang in d.languages:  # only values the app knows: this text is later trusted by the UI
+        out["lang"] = body.lang
+    if body.speak is not None:
+        out["speak"] = body.speak
+    if body.rate is not None:
+        out["rate"] = body.rate
+    if body.profile is not None:
+        keys = {f["key"] for f in d.profile_fields}
+        out["profile"] = {k: v.strip()[:100] for k, v in body.profile.items() if k in keys and v.strip()}
+    return {"saved": get_chats().save_prefs(owner, out)}
+
+
 @router.put("/feedback")
-def feedback(body: FeedbackIn, x_client_id: str | None = Header(None)):
+def feedback(body: FeedbackIn, request: Request, x_client_id: str | None = Header(None)):
     """Thumbs up/down on one answer. Scoped to the owner: another person's answer id is a 404, not a vote."""
-    if not get_chats().set_feedback(_owner_or_400(x_client_id), body.message_id, body.value):
+    if not get_chats().set_feedback(_owner_or_400(request, x_client_id), body.message_id, body.value):
         raise HTTPException(404, "Answer not found.")
     return {"ok": True}
 
 
 @router.delete("/chats/{chat_id}")
-def remove_chat(chat_id: str, x_client_id: str | None = Header(None)):
-    owner = _owner_or_400(x_client_id)
+def remove_chat(chat_id: str, request: Request, x_client_id: str | None = Header(None)):
+    owner = _owner_or_400(request, x_client_id)
     if not get_chats().delete_chat(owner, chat_id):
         raise HTTPException(404, "Chat not found.")
     get_orchestrator().forget_history(f"{owner[:16]}:{chat_id}")
     return {"deleted": True}
+
+
+class GoogleIn(BaseModel):
+    credential: str = Field(..., min_length=20, max_length=4096)  # the ID token from Google Identity Services
+
+
+@router.get("/auth/config")
+def auth_config():
+    """Tells the UI whether to show 'Sign in with Google' (the client id is public by design)."""
+    return {"enabled": auth.enabled(), "client_id": get_settings().google_client_id.strip() if auth.enabled() else ""}
+
+
+@router.post("/auth/google")
+async def auth_google(body: GoogleIn, request: Request):
+    enforce(request, "auth")
+    if not auth.enabled():
+        raise HTTPException(404, "Sign-in is not configured.")
+    try:
+        claims = await run_in_threadpool(auth.verify_google_credential, body.credential)  # may fetch Google's keys: blocking
+    except auth.AuthError as e:
+        raise HTTPException(401, str(e))
+    anon = owner_key(request.headers.get("x-client-id"))
+    if anon:
+        get_chats().adopt(anon, auth.owner_for_user(claims))  # chats made in this browser before signing in now belong to the account
+    get_chats().record_user({**claims, "name": claims.get("name") or claims.get("email", "")})  # remembers the account; never blocks sign-in
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    res = JSONResponse({"user": auth.public_user({**claims, "name": claims.get("name") or claims.get("email", "")})})
+    res.set_cookie(auth.COOKIE, auth.make_session(claims), max_age=get_settings().session_days * 86400,
+                   httponly=True, samesite="lax", secure=secure, path="/")
+    return res
+
+
+@router.get("/auth/me")
+def auth_me(request: Request):
+    user = auth.read_session(request.cookies.get(auth.COOKIE))
+    return {"user": auth.public_user(user) if user else None}
+
+
+@router.post("/auth/logout")
+def auth_logout():
+    res = JSONResponse({"ok": True})
+    res.delete_cookie(auth.COOKIE, path="/")
+    return res
 
 
 @router.get("/live-check")

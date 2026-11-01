@@ -96,3 +96,18 @@ export async function suggestPlaces(q, signal) {
 /** Thumbs up/down on one saved answer; value null clears it. Resolves false if it could not be saved (feedback is a convenience). */
 export const sendFeedback = (messageId, value) =>
   fetch("/api/feedback", { method: "PUT", headers: who({ "Content-Type": "application/json" }), body: JSON.stringify({ message_id: messageId, value }) }).then((r) => r.ok).catch(() => false);
+
+// --- Sign in with Google (optional: the server says whether it is configured) ---------------------------------------------------
+// The browser gets an ID token from Google; the server verifies it and sets an HttpOnly cookie, so no token is ever kept in JS.
+export const getAuthConfig = () => fetch("/api/auth/config").then(j);
+export const getMe = () => fetch("/api/auth/me").then(j).then((d) => d.user);
+export const signInWithGoogle = (credential) =>
+  fetch("/api/auth/google", { method: "POST", headers: who({ "Content-Type": "application/json" }), body: JSON.stringify({ credential }) })
+    .then((r) => (r.ok ? r.json() : Promise.reject(Object.assign(new Error(`HTTP ${r.status}`), { status: r.status }))))
+    .then((d) => d.user);
+export const signOut = () => fetch("/api/auth/logout", { method: "POST" }).then((r) => r.ok).catch(() => false);
+
+// Settings (language, profile, read-aloud, speed) follow the person: saved on the server, localStorage stays as the instant/offline copy.
+export const getSettings = () => fetch("/api/settings", { headers: who() }).then(j).then((d) => d.settings);
+export const saveSettings = (settings) =>
+  fetch("/api/settings", { method: "PUT", headers: who({ "Content-Type": "application/json" }), body: JSON.stringify(settings) }).then((r) => r.ok).catch(() => false);

@@ -9,7 +9,10 @@ import { safeHref } from "../url.js";
 
 const valid = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : d; }; // Invalid Date does not throw, so check it
 const fmtTime = (iso) => valid(iso)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) ?? "";
-const day = (d) => { try { return new Date(d).toLocaleDateString([], { weekday: "short", day: "numeric" }); } catch { return d; } };
+// Card titles come from the API in English ("<label> - <place>"): the label is translated here, the place is kept as is.
+const afterDash = (title) => String(title || "").split(" - ").slice(1).join(" - ");
+const titled = (title, label) => { const rest = afterDash(title); return rest ? `${label} - ${rest}` : title; };
+const day = (d, lang) => { try { return new Date(d).toLocaleDateString(lang ? `${lang}-IN` : [], { weekday: "short", day: "numeric" }); } catch { return d; } };
 
 const fullTime = (iso, lang) => valid(iso)?.toLocaleString(lang, { dateStyle: "medium", timeStyle: "medium" }) ?? "";
 
@@ -44,20 +47,21 @@ export function Sources({ list, lang }) {
 
 function Forecast({ c, lang }) {
   if (!Array.isArray(c.days) || !c.days.length) return null; // never show a card with nothing real in it
+  const t = uiText(lang);
   return (
     <div className="card">
-      <h3>{c.title}</h3>
+      <h3>{titled(c.title, t.forecast7)}</h3>
       <div className="days">
         {(c.days || []).map((d) => (
           <div key={d.date} className={`dcell ${d.rain_mm >= 2.5 ? "wet" : ""}`}>
-            <b>{day(d.date)}</b>
+            <b>{day(d.date, lang)}</b>
             <span>{Math.round(d.tmax)}° / {Math.round(d.tmin)}°</span>
             <em>{d.rain_mm} mm</em>
           </div>
         ))}
       </div>
       <AlertList lang={lang} alerts={(c.flags || []).map((f) => ({ key: f?.flag, day: f?.day }))} />
-      {c.soil_moisture != null && <small>Soil moisture (3-9 cm, model): {c.soil_moisture} m³/m³</small>}
+      {c.soil_moisture != null && <small>{t.soilTop}: {c.soil_moisture} m³/m³</small>}
     </div>
   );
 }
@@ -114,7 +118,7 @@ function Prices({ c, lang }) {
   const s = c.signal || {};
   return (
     <div className="card">
-      <h3>{c.title}</h3>
+      <h3>{(/^(.+?) - mandi prices, (.+)$/.exec(c.title || "") || []).slice(1).map((x, i) => (i === 0 ? x : ` - ${t.mandiPrices}, ${x}`)).join("") || c.title}</h3>
       {sig && <SignalFlip s={s} t={t} />}
       {!sig && s.signal === "INSUFFICIENT_DATA" && <p className="notrend">{t.noTrend}</p>}
       {pts.length > 1 && <Chart pts={pts} t={t} />}
@@ -124,8 +128,8 @@ function Prices({ c, lang }) {
       )}
       {c.position && (
         <small className="position">
-          State median ₹{c.position.state_median} across {c.position.markets} markets · best ₹{c.position.best_price} at {c.position.best_market}
-          {c.position.local_median != null ? ` · your district ₹${c.position.local_median} (${c.position.pct_vs_state_median}% vs state)` : ""}
+          {t.stateMed} ₹{c.position.state_median} · {c.position.markets} {t.nMarkets} · {t.best} ₹{c.position.best_price} - {c.position.best_market}
+          {c.position.local_median != null ? ` · ${t.yourDist} ₹${c.position.local_median} (${c.position.pct_vs_state_median}% ${t.vsState})` : ""}
         </small>
       )}
     </div>
@@ -133,17 +137,18 @@ function Prices({ c, lang }) {
 }
 
 function RainHistory({ c, lang }) {
+  const t = uiText(lang);
   if (c.past_7d_mm == null || c.past_30d_mm == null || c.forecast_7d_mm == null) return null;
   const pts = c.daily || [];
   const hi = Math.max(1, ...pts.map((p) => p.rain_mm ?? 0));
   const today = new Date().toISOString().slice(0, 10);
   return (
     <div className="card">
-      <h3>{c.title}</h3>
+      <h3>{titled(c.title, t.tRain)}</h3>
       <div className="rainstats">
-        <div><b>{c.past_7d_mm} mm</b><span>last 7 days</span></div>
-        <div><b>{c.past_30d_mm} mm</b><span>last 30 days</span></div>
-        <div><b>{c.forecast_7d_mm} mm</b><span>next 7 days</span></div>
+        <div><b>{c.past_7d_mm} mm</b><span>{t.last7}</span></div>
+        <div><b>{c.past_30d_mm} mm</b><span>{t.last30}</span></div>
+        <div><b>{c.forecast_7d_mm} mm</b><span>{t.next7}</span></div>
       </div>
       {pts.length > 0 && (
         <div className="rainbars" role="img" aria-label="daily rain, last 30 days then next 7">
@@ -155,57 +160,71 @@ function RainHistory({ c, lang }) {
   );
 }
 
-function Diagnosis({ c }) {
+function Diagnosis({ c, lang }) {
+  const t = uiText(lang);
   return (
     <div className="card">
-      <h3>{c.title}</h3>
-      <span className={`sev ${c.severity}`}>Severity: {c.severity}</span>
-      {c.symptoms?.length > 0 && <><h4>Symptoms seen</h4><ul>{c.symptoms.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
-      {c.possible_causes?.length > 0 && <><h4>Possible causes</h4><ul>{c.possible_causes.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
-      {c.recommendations?.length > 0 && <><h4>Next steps</h4><ul>{c.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      <h3>{c.title === "Crop health assessment" ? t.tDiag : c.title}</h3>
+      <span className={`sev ${c.severity}`}>{t.severity}: {c.severity}</span>
+      {c.symptoms?.length > 0 && <><h4>{t.symptoms}</h4><ul>{c.symptoms.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      {c.possible_causes?.length > 0 && <><h4>{t.causes}</h4><ul>{c.possible_causes.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
+      {c.recommendations?.length > 0 && <><h4>{t.nextSteps}</h4><ul>{c.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
       <small>{c.disclaimer}</small>
     </div>
   );
 }
 
-const WATER = { RAIN_COVERS_NEED: "rain covers need", WETTER_THAN_OPTIMUM: "wetter than ideal", NEEDS_IRRIGATION: "needs irrigation", NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED: "needs irrigation (little rain)", FAR_WETTER_THAN_CROP_TOLERATES: "too wet" };
+const WATER = { RAIN_COVERS_NEED: "w1", WETTER_THAN_OPTIMUM: "w2", NEEDS_IRRIGATION: "w3", NEEDS_IRRIGATION_RAIN_FAR_BELOW_NEED: "w4", FAR_WETTER_THAN_CROP_TOLERATES: "w5" }; // keys into the UI text
 
-function CropFit({ c }) {
+function CropFit({ c, lang }) {
+  const t = uiText(lang);
   const rows = c.crops || [];
   if (!rows.length) return null;
   return (
     <div className="card">
-      <h3>{c.title}</h3>
+      <h3>{titled(c.title, t.tCrops)}</h3>
       <table>
-        <thead><tr><td>Crop</td><td>Fit</td><td>Sow about</td><td>Harvest</td><td>Water</td></tr></thead>
+        <thead><tr><td>{t.cCrop}</td><td>{t.cFit}</td><td>{t.cSow}</td><td>{t.cHarvest}</td><td>{t.cWater}</td></tr></thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.crop}><td>{r.crop}</td><td>{r.fit}</td><td>{r.sow_on}</td><td>{r.harvest_from} to {r.harvest_to}</td><td>{WATER[r.rain_label] || r.rain_label}</td></tr>
+            <tr key={r.crop}><td>{r.crop}</td><td>{r.fit}</td><td>{r.sow_on}</td><td>{r.harvest_from} to {r.harvest_to}</td><td>{t[WATER[r.rain_label]] || r.rain_label}</td></tr>
           ))}
         </tbody>
       </table>
-      {c.note && <small className="muted">{c.note}</small>}
+      {c.note && <small className="muted">{c.note === "Climate only. Confirm with your agriculture officer." ? t.climateNote : c.note}</small>}
     </div>
   );
 }
 
-function Soil({ c }) {
+function Soil({ c, lang }) {
+  const t = uiText(lang);
   if (c.ph == null && c.clay_pct == null) return null;
   return (
     <div className="card">
-      <h3>{c.title}</h3>
+      <h3>{titled(c.title, t.tSoil)}</h3>
       <div className="rainstats">
         <div><b>{c.ph}</b><span>pH</span></div>
-        <div><b>{c.clay_pct}%</b><span>clay</span></div>
-        <div><b>{c.sand_pct}%</b><span>sand</span></div>
-        <div><b>{c.organic_carbon_g_kg} g/kg</b><span>organic carbon</span></div>
+        <div><b>{c.clay_pct}%</b><span>{t.clay}</span></div>
+        <div><b>{c.sand_pct}%</b><span>{t.sand}</span></div>
+        <div><b>{c.organic_carbon_g_kg} g/kg</b><span>{t.orgC}</span></div>
       </div>
-      <small className="muted">{c.texture_class} soil. {c.note}</small>
+      <small className="muted">{c.texture_class}. {c.note === "Model estimate (250 m). A soil test gives the real values." ? t.soilNote : c.note}</small>
     </div>
   );
 }
 
-const CARD_TYPES = { soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
+function Notice({ c, lang }) {
+  const t = uiText(lang);
+  if (c.kind !== "no_prices" || !c.crop) return null; // an unknown notice kind renders nothing
+  return (
+    <div className="card nonotice" role="note">
+      <h3>{c.crop} · {t.kPrices}</h3>
+      <p>{t.noPrices(c.crop, c.state || "", c.days ?? "", c.complete !== false)}</p>
+    </div>
+  );
+}
+
+const CARD_TYPES = { notice: Notice, soil: Soil, crop_fit: CropFit, forecast: Forecast, prices: Prices, rainfall_history: RainHistory, diagnosis: Diagnosis };
 
 export function Cards({ cards, lang }) {
   if (!Array.isArray(cards) || !cards.length) return null;

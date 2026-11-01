@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
-from app.core.config import get_settings
+from app.core.config import get_settings, llm_keys
 from app.memory.store import KNOWLEDGE, get_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,7 +24,7 @@ async def lifespan(_: FastAPI):
     if store.count(KNOWLEDGE) == 0 and KNOWLEDGE_DIR.exists():
         n = store.seed_dir(KNOWLEDGE_DIR)
         logging.getLogger("startup").info("seeded %d knowledge chunks", n)
-    if not get_settings().llm_api_key:
+    if not llm_keys(get_settings()):
         logging.getLogger("startup").warning("LLM_API_KEY not set -> running in OFFLINE mode (retrieval only)")
     yield
 
@@ -33,7 +33,10 @@ s = get_settings()
 app = FastAPI(title=s.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
+    # Explicit origins from CORS_ORIGINS (deployed URLs); the regex covers every localhost port so a dev machine works
+    # whichever port Vite picks.
     allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )

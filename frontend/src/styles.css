@@ -276,3 +276,26 @@ textarea:focus-visible, input:focus-visible, select:focus-visible { outline-offs
 @media (prefers-reduced-motion: reduce) { .shimmer { color:var(--muted); background:none; } }
 .trace summary { display:block; text-transform:none; letter-spacing:0; font-weight:inherit; font-size:15px; }
 .trace summary em { float:right; }
+
+.trace li { display:flow-root; } /* a floated time must stay inside its own step, not slide onto the next one */
+.nonotice { border-color:var(--accent); } .nonotice p { margin:0; color:var(--text); }
+
+/* --- Sign in with Google --- */
+.signin { display:flex; align-items:center; gap:8px; min-height:32px; }
+.gbtn { color-scheme:light; } /* Google's button renders in an iframe; keep its colours predictable on our dark page */
+.signin-err { color:var(--bad); font-size:12px; }
+.account { position:relative; }
+.acct-btn { padding:0; width:34px; height:34px; border-radius:50%; background:var(--panel); border:1px solid var(--line); display:grid; place-items:center; overflow:hidden; }
+.acct-btn:hover, .acct-btn[aria-expanded=true] { border-color:var(--accent); }
+.acct-avatar { width:100%; height:100%; border-radius:50%; object-fit:cover; display:grid; place-items:center; background:var(--accent); color:#111; font-weight:700; font-size:14px; }
+.acct-menu { position:absolute; right:0; top:42px; z-index:30; width:260px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; box-shadow:0 12px 32px rgba(0,0,0,.45); }
+.acct-who { display:flex; gap:12px; align-items:center; }
+.acct-who .acct-avatar { width:40px; height:40px; flex:none; }
+.acct-who div { min-width:0; display:flex; flex-direction:column; }
+.acct-who small { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+.acct-who strong, .acct-who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acct-who span { color:var(--muted); font-size:12px; }
+.acct-note { margin:12px 0; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+.acct-out { width:100%; background:transparent; color:var(--text); border:1px solid var(--line); }
+.acct-out:hover { border-color:var(--bad); color:var(--bad); }
+@media (max-width: 700px) { .acct-menu { right:-8px; width:min(260px, calc(100vw - 32px)); } }

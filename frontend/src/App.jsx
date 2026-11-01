@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { chatStream, deleteChat, getChat, getDomain, getHealth, listChats, locate, newChatId, sendFeedback, transcribe } from "./api.js";
-import Trace from "./components/Trace.jsx";
+import { chatStream, deleteChat, getChat, getDomain, getHealth, listChats, locate, newChatId, sendFeedback, transcribe, getAuthConfig, getMe, getSettings, saveSettings } from "./api.js";
 import MessageList from "./components/MessageList.jsx";
 import Composer from "./components/Composer.jsx";
 import History from "./components/History.jsx";
 import Profile from "./components/Profile.jsx";
+import SignIn from "./components/SignIn.jsx";
 import AnimatedBadge from "./components/AnimatedBadge.jsx";
 import { prepareImage } from "./image.js";
 import { say, stopSpeech, useVoices } from "./speech.js";
@@ -15,7 +15,10 @@ const loadChatId = () => { try { return localStorage.getItem("chatId") || newCha
 const saveChatId = (id) => { try { localStorage.setItem("chatId", id); } catch { /* private mode */ } };
 const loadProfile = () => { try { return JSON.parse(localStorage.getItem("profile") || "{}"); } catch { return {}; } };
 const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringify(p)); } catch { /* private mode */ } };
-const loadLang = () => { try { return localStorage.getItem("lang") || "en"; } catch { return "en"; } };
+// localStorage is shared by every app on this origin and can hold anything (we have seen the value "\"en\"" with quote marks).
+// A bad tag makes toLocaleString throw and blanks the whole page, so only a plain language code is accepted.
+const cleanLang = (v) => { const l = String(v ?? "").replace(/^["']+|["']+$/g, "").trim(); return /^[a-z]{2,3}$/.test(l) ? l : "en"; };
+const loadLang = () => { try { return cleanLang(localStorage.getItem("lang")); } catch { return "en"; } };
 const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* private mode */ } };
 const stamp = () => new Date().toISOString();
 // Voice: Chrome/Firefox record webm, Safari/iPhone records mp4, so the recorder picks what the browser supports and the file name follows the real type.
@@ -66,27 +69,52 @@ export default function App() {
   const [profile, setProfile] = useState(loadProfile);
   const [photo, setPhoto] = useState(null); // {b64, previewUrl, name}: already shrunk to 1024 px
   const [slow, setSlow] = useState(false);
+  const [aiDown, setAiDown] = useState(false); // "key configured" is not "AI answering": the badge follows the last real answer
   const [notice, setNotice] = useState("");
   const [rate, setRate] = useState(loadRate);
   const voices = useVoices();
   const [chatId, setChatId] = useState(loadChatId);
   const [chats, setChats] = useState([]);
   const [drawer, setDrawer] = useState(false);
+  const [authCfg, setAuthCfg] = useState({ enabled: false, client_id: "" });
+  const [user, setUser] = useState(null);
   const opened = useRef(0); // the latest chat the person asked to open; a slow earlier request must not overwrite it
   const recorder = useRef(null);
   const abortRef = useRef(null); // lets the Stop button cancel the answer being written
   const [dragging, setDragging] = useState(false);
   const busyRef = useRef(false);
+  const prefsReady = useRef(false); // never write settings to the server before the saved ones were read, or a fresh device would erase them
+
+  // Settings: the server copy (per account or per browser) wins over this device's localStorage. Re-read after sign-in, since the owner changed.
+  const pullPrefs = () => getSettings().then((p) => {
+    if (p && Object.keys(p).length) {
+      if (p.lang) { setLang(cleanLang(p.lang)); saveLang(cleanLang(p.lang)); }
+      if (typeof p.speak === "boolean") setSpeak(p.speak);
+      if (p.rate) { setRate(p.rate); saveRate(p.rate); }
+      if (p.profile) { setProfile(p.profile); saveProfile(p.profile); }
+    }
+    prefsReady.current = true;
+  }).catch(() => {}); // server down: keep local settings, and stay read-only so nothing is overwritten
+  useEffect(() => { pullPrefs(); }, []);
+  useEffect(() => {
+    if (!prefsReady.current) return;
+    const id = setTimeout(() => saveSettings({ lang, speak, rate, profile }), 800); // debounced: typing a village is one save, not ten
+    return () => clearTimeout(id);
+  }, [lang, speak, rate, profile]);
 
   useEffect(() => {
     getDomain().then(setDomain).catch(() => setDomain({ title: "Backend unreachable", tagline: "Start it: make dev", suggested_prompts: [], languages: { en: "English" } }));
     getHealth().then(setHealth).catch(() => {});
+    getAuthConfig().then((c) => { setAuthCfg(c); if (c.enabled) getMe().then(setUser).catch(() => {}); }).catch(() => {}); // login is optional: any failure = anonymous
     // Reopen the chat that was open last time, but only if the server has it (asking for an unsaved one is a 404 in the console).
     listChats().then((cs) => { setChats(cs); if (cs.some((c) => c.id === chatId)) getChat(chatId).then((c) => setMsgs(c.messages)).catch(() => {}); }).catch(() => {});
   }, []);
   useEffect(() => saveChatId(chatId), [chatId]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]); // screen readers and Devanagari shaping follow the chosen language
 
+  // The chat list belongs to whoever is signed in, so it is reloaded on sign-in; signing out also clears the screen of their chats.
+  const onUser = (u) => { setUser(u); refreshChats(); pullPrefs(); };
+  const onSignedOut = () => { setUser(null); newChat(); setChats([]); refreshChats(); pullPrefs(); };
   const refreshChats = () => listChats().then(setChats).catch(() => {}); // history is a convenience: the chat works without it
 
   function newChat() {
@@ -136,8 +164,9 @@ export default function App() {
     setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text, at: stamp() }]);
     try {
       const imageB64 = image?.b64;
-      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
+      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop, sowing_date: profile.sowing_date }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
       setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r, at: stamp(), id: r.message_id || undefined, feedback: null }]);
+      setAiDown(!!r.live_only);
       refreshChats();
       if (r.profile?.place) { const np = { ...profile, place: profile.place || r.profile.place }; setProfile(np); saveProfile(np); }
       if (speak) speakNow(r.answer, r.language || lang);
@@ -277,7 +306,7 @@ export default function App() {
       <header>
         <div>
           <h1>{domain.title}</h1>
-          <p>{domain.tagline}</p>
+          <p>{uiText(lang).tagline || domain.tagline}</p>
         </div>
         <div className="controls">
           <button type="button" className="mic hbtn" onClick={() => setDrawer(true)} aria-label={uiText(lang).history} aria-expanded={drawer} aria-controls="history">☰ {uiText(lang).history}</button>
@@ -292,7 +321,8 @@ export default function App() {
             <option value={1}>{uiText(lang).normal}</option>
             <option value={1.25}>🐇 {uiText(lang).fast}</option>
           </select>
-          {health && <AnimatedBadge text={health.llm_configured ? "AI online" : "AI offline (live data only)"} color={health.llm_configured ? "#3ecf8e" : "#ff8a3d"} />}
+          <SignIn clientId={authCfg.enabled ? authCfg.client_id : ""} user={user} onUser={onUser} onSignedOut={onSignedOut} lang={lang} />
+          {health && <AnimatedBadge text={!health.llm_configured ? "AI offline (live data only)" : aiDown ? uiText(lang).aiBusy : uiText(lang).aiOn} color={health.llm_configured && !aiDown ? "#3ecf8e" : "#ff8a3d"} />}
         </div>
       </header>
 
@@ -305,10 +335,6 @@ export default function App() {
           prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
           onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
         />
-
-        <aside aria-label={uiText(lang).trace}>
-                    <Trace steps={trace} lang={lang} />
-        </aside>
       </main>
 
       <Composer value={input} onChange={setInput} onSend={() => send()} busy={busy} photo={photo} onPhoto={pickPhoto} onClearPhoto={() => { URL.revokeObjectURL(photo?.previewUrl); setPhoto(null); }} rec={rec} transcribing={transcribing} onMic={toggleMic} lang={lang} onStop={stop} />

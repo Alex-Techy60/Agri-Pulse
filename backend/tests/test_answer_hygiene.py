@@ -121,3 +121,71 @@ def test_the_models_own_reasoning_is_never_delivered_as_an_answer(leak):
 def test_ordinary_sentences_about_the_decision_or_the_rule_are_not_mistaken_for_leaks(fine):
     ctx = "MANDI PRICES WEATHER 3.7 % 5 % 12.8 mm 2026-10-30 Rs"
     assert not [v for v in run_all(DOMAIN.validators, fine, ctx) if "reasoning" in v], fine
+
+
+NEUTRAL_CTX = CTX + "\nSIGNAL (computed in code): NEUTRAL - prices are roughly STEADY"
+
+
+@pytest.mark.parametrize("advice", [
+    "The data does not point either way. You may hold the onions and watch the market.",
+    "Prices are steady, so you can wait a few days.",
+    "It is better to hold for now.",
+])
+def test_no_hold_or_wait_advice_when_the_signal_is_neutral(advice):
+    assert run_all(DOMAIN.validators, advice, NEUTRAL_CTX), advice
+    assert not run_all(DOMAIN.validators, advice, CTX.replace("SIGNAL NEUTRAL", "SIGNAL HOLD") + "\nSIGNAL (computed in code): HOLD"), advice
+
+
+def test_no_hold_advice_when_context_shows_the_steady_label_the_model_now_sees():
+    ctx = CTX + "\nSIGNAL (computed in code): STEADY - prices are roughly STEADY"
+    assert run_all(DOMAIN.validators, "You may hold the onions and watch the market.", ctx)
+
+
+def test_neutral_answer_without_advice_passes():
+    ans = "The data does not point to selling now or to waiting. The choice is yours."
+    assert not run_all(DOMAIN.validators, ans, NEUTRAL_CTX)
+
+
+@pytest.mark.parametrize("bad", [
+    "Decision: NEUTRAL, prices moved 3.7 % (Agmarknet, 2026-10-30).",
+    "किंमती 3.7 % बदलल्या, कोडने NEUTRAL दिले आहे (Agmarknet, 2026-10-30).",
+    "सिंचन करा (कोड, 2026-10-31), पाऊस 12.8 mm (Open-Meteo, 2026-10-31).",
+])
+def test_internal_words_are_not_shown_to_the_farmer(bad):
+    assert flagged(bad), bad
+
+
+@pytest.mark.parametrize("good", [
+    "We cannot forecast whether prices will go up next week.",
+    "Therefore, we cannot say the price will go up. Watch the daily updates.",
+    "There is no indication that prices will rise next week (Agmarknet, 2026-10-30).",
+])
+def test_refusing_to_forecast_is_not_rejected_as_a_forecast(good):
+    assert not run_all(DOMAIN.validators, good, CTX), good
+
+
+@pytest.mark.parametrize("bad", [
+    "Prices will go up next week, so wait.",
+    "Onion prices may rise next week.",
+])
+def test_a_real_forecast_is_still_rejected(bad):
+    assert run_all(DOMAIN.validators, bad, CTX), bad
+
+
+@pytest.mark.parametrize("bad", [
+    "Since you have 2 acres of land, you meet the basic land-holding condition.",
+    "You already satisfy the eligibility criteria.",
+    "So, based on the rule, you should be eligible, but the office confirms.",
+    "It does not set a minimum land size; 2 acres meets the landholding farmer condition.",
+])
+def test_no_eligibility_verdict_even_without_the_word_eligible(bad):
+    assert run_all(DOMAIN.validators, bad, CTX), bad
+
+
+def test_internal_failure_tags_are_not_shown():
+    assert flagged("The price source could not be found (MANDI FAILED) for Xyzzyville.")
+
+
+def test_published_conditions_are_still_allowed():
+    ans = "Any farmer family that owns cultivable land is eligible, as the instalment document says. The agriculture office decides each case."
+    assert not run_all(DOMAIN.validators, ans, CTX)
