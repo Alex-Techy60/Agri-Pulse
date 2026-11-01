@@ -1,7 +1,7 @@
 """Planner: asks a small LLM which live tools a question needs, then validates the answer in code.
 
 LLM proposes, code disposes: unknown tool names are dropped, and the tools the intent already
-requires are always kept (the sell/hold signal needs mandi + weather). The planner can only ADD
+requires are always kept (the sell/hold signal needs mandi + weather; the weather stays out of the answer unless heavy rain matters). The planner can only ADD
 tools (e.g. rain_history for a "will rain hurt my harvest" question). Any failure -> intent_tools.
 """
 from __future__ import annotations

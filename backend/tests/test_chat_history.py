@@ -258,3 +258,23 @@ def test_prefs_roundtrip_and_adopt_keeps_the_accounts_own(store):
     store.save_prefs(ALICE, {"lang": "ta"})
     store.adopt(ALICE, BOB)                       # BOB already has settings: they win
     assert store.load_prefs(BOB)["lang"] == "hi" and store.load_prefs(ALICE) == {}
+
+
+def test_a_hung_history_database_never_holds_back_the_answer(client, store, monkeypatch):
+    """A dead database connection (e.g. after a network change) must cost the answer at most the save budget."""
+    import threading
+    import time
+    import app.api.routes as routes
+
+    release = threading.Event()
+    monkeypatch.setattr(routes, "SAVE_BUDGET_S", 0.2)
+    monkeypatch.setattr(store, "append_turn", lambda *a, **k: release.wait(10))
+    t0 = time.time()
+    try:
+        r = client.post("/api/chat", json={"message": "hello", "session_id": "chat-0001"}, headers=h(ALICE_ID))
+        s = client.post("/api/chat/stream", json={"message": "hi", "session_id": "chat-0002"}, headers=h(ALICE_ID))
+    finally:
+        release.set()
+    assert time.time() - t0 < 5
+    assert r.status_code == 200 and r.json()["answer"] and r.json().get("message_id") is None
+    assert '"type": "final"' in s.text

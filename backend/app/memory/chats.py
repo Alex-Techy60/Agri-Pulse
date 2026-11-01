@@ -97,8 +97,12 @@ class ChatStore:
             from psycopg.rows import dict_row
             from psycopg_pool import ConnectionPool
 
+            # A laptop that changes network leaves pooled connections dead; without these limits a query on one waits for
+            # Linux to give up (~15 min) while holding the store lock, and every later save queues behind it.
+            pg_limits = {"connect_timeout": 8, "tcp_user_timeout": 5000, "keepalives": 1, "keepalives_idle": 30,
+                         "keepalives_interval": 5, "keepalives_count": 3}
             self._pool = ConnectionPool(database_url, min_size=1, max_size=5, timeout=8, open=False,
-                                        kwargs={"row_factory": dict_row, "connect_timeout": 8}, check=ConnectionPool.check_connection)
+                                        kwargs={"row_factory": dict_row, **pg_limits}, check=ConnectionPool.check_connection)
             self._pool.open(wait=True, timeout=10)  # raises when unreachable
             with self._db() as db:
                 for stmt in filter(str.strip, schema.split(";")):

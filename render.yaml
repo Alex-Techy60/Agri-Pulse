@@ -29,6 +29,8 @@ services:
         value: https://openrouter.ai/api/v1
       - key: FALLBACK3_MODEL
         value: google/gemma-3-27b-it:free
+      - key: SARVAM_API_KEY  # natural read-aloud voices; empty = browser voice
+        sync: false
       - key: DATA_GOV_API_KEY
         sync: false
       - key: DATABASE_URL

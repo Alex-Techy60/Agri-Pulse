@@ -6,7 +6,7 @@ const OFFLINE_MARK = "(AI summary unavailable - showing live data only)";
 const clock = (iso, lang) => { try { return new Date(iso).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 
 // One bubble. Bot messages get Copy / Listen (read aloud) and, when the request failed, Try again.
-export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak, onVote }) {
+export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak, onVote, onAsk }) {
   const t = uiText(lang);
   const [copied, setCopied] = useState(false);
   const bot = m.role === "bot";
@@ -38,6 +38,12 @@ export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak
           {!folded && m.meta?.sources?.length > 0 && <small>{t.docs}: {m.meta.sources.join(", ")}</small>}
           {m.meta?.degraded && <small className="warn note">⚠ {t.degraded}</small>}
         </article>
+        {onAsk && Array.isArray(m.meta?.follow_ups) && m.meta.follow_ups.length > 0 && (
+          <nav className="followups" aria-label={t.more}>
+            <small className="muted">{t.more}</small>
+            {m.meta.follow_ups.filter((q) => typeof q === "string" && q).map((q) => <button key={q} type="button" onClick={() => onAsk(q)}>{q}</button>)}
+          </nav>
+        )}
         <div className="meta">
           {m.at && <time dateTime={m.at}>{clock(m.at, lang)}</time>}
           {bot && (

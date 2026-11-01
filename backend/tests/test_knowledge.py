@@ -124,3 +124,16 @@ def test_every_price_chunk_carries_its_column_guide_or_header_so_a_number_cannot
     hits = store.search("knowledge", "Paddy Common MSP kharif 2441")
     table = next(h for h in hits if "Paddy | Common | 2441" in h.text)
     assert "Reading guide added by KisaanMitra" in table.text and "Soybean (Yellow) | 5708" in table.text  # the whole table is one chunk
+
+
+def test_a_price_answer_lists_only_support_price_documents_and_no_forecast_card():
+    d = domain(["good"])
+    d.knowledge_intents, d.intents = DOMAIN.knowledge_intents, DOMAIN.intents
+    d.knowledge_sources = DOMAIN.knowledge_sources
+    store = StubStore([hit("[MSP doc - 30 SEP 2026] Wheat | 2610", "msp_rabi.md"), hit("[PM Kisan - 2026] instalment of Rs 2000", "pm_kisan_23rd.md")])
+    r = Orchestrator(d, FakeLLM(["ok"], route="sell_or_hold"), store).run("what is the support price?", profile={"place": "Nashik"})
+    assert r.sources == ["msp_rabi.md"]
+    assert "forecast" not in DOMAIN.intent_cards["sell_or_hold"] and "forecast" not in DOMAIN.intent_cards["sow_or_crop_care"]
+    assert "forecast" in DOMAIN.intent_cards["weather_advice"]
+    retr = [t for t in r.trace if t.agent == "Retriever" and "documents" in t.action][0]
+    assert "pm_kisan" not in retr.detail  # the trace lists only what the answer used

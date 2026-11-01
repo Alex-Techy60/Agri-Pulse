@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     llm_vision_model: str = "qwen/qwen3.8-27b"
     stt_model: str = "whisper-large-v3-turbo"
 
+    # --- Read-aloud (optional: empty key = the browser's own voice, which is robotic on Linux) ---------
+    sarvam_api_key: str = ""  # free key from dashboard.sarvam.ai: natural Indian-language voices
+    tts_model: str = "bulbul:v3"
+    tts_speaker: str = ""  # empty = Sarvam's default voice for the model
+    tts_timeout_s: float = 15.0
+
     fallback_base_url: str = ""  # e.g. https://openrouter.ai/api/v1
     fallback_api_key: str = ""
     fallback_model: str = ""

@@ -47,7 +47,7 @@ export default function MessageList({ msgs, chatId, busy, step, lang, prompts, o
   function speak(m) {
     if (speakingId === m.at) { stopSpeech(); return setSpeakingId(null); }
     const l = m.meta?.language || lang; // the answer's own language, which can differ from the picker
-    const out = say(m.text, l, { rate, voices, onEnd: () => setSpeakingId((id) => (id === m.at ? null : id)) });
+    const out = say(m.text, l, { rate, voices, natural: !!health?.tts_configured, onEnd: () => setSpeakingId((id) => (id === m.at ? null : id)) });
     if (out === "ok") return setSpeakingId(m.at);
     setSpeakingId(null);
     onNotice(t.novoice(languages?.[l] || l)); // no voice installed for this language, or no speech API in this browser
@@ -75,6 +75,7 @@ export default function MessageList({ msgs, chatId, busy, step, lang, prompts, o
               m={m} lang={lang} grouped={!newDay && prev?.role === m.role}
               speakingId={speakingId} onSpeak={speak} onVote={onVote}
               onRetry={i === last && !busy && m.retry ? () => onRetry(m.retry) : undefined}
+              onAsk={i === last && !busy && m.role === "bot" ? onAsk : undefined}
             />
           </Fragment>
         );

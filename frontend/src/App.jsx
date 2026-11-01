@@ -13,7 +13,7 @@ import { uiText } from "./i18n.js";
 // The open chat survives a page reload; its messages come back from the server.
 const loadChatId = () => { try { return localStorage.getItem("chatId") || newChatId(); } catch { return newChatId(); } };
 const saveChatId = (id) => { try { localStorage.setItem("chatId", id); } catch { /* private mode */ } };
-const loadProfile = () => { try { return JSON.parse(localStorage.getItem("profile") || "{}"); } catch { return {}; } };
+const loadProfile = () => { try { const { place } = JSON.parse(localStorage.getItem("profile") || "{}"); return place ? { place } : {}; } catch { return {}; } }; // only the place is remembered: the crop comes from each question
 const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringify(p)); } catch { /* private mode */ } };
 // localStorage is shared by every app on this origin and can hold anything (we have seen the value "\"en\"" with quote marks).
 // A bad tag makes toLocaleString throw and blanks the whole page, so only a plain language code is accepted.
@@ -164,7 +164,7 @@ export default function App() {
     setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text, at: stamp() }]);
     try {
       const imageB64 = image?.b64;
-      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, crop: profile.crop, sowing_date: profile.sowing_date }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
+      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
       setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r, at: stamp(), id: r.message_id || undefined, feedback: null }]);
       setAiDown(!!r.live_only);
       refreshChats();
@@ -190,7 +190,7 @@ export default function App() {
 
   // Automatic read-aloud uses the same per-language voice as the Listen button; no voice for the language means a visible note, not silence.
   function speakNow(text, l) {
-    const out = say(text, l, { rate, voices });
+    const out = say(text, l, { rate, voices, natural: !!health?.tts_configured });
     if (out === "novoice") setNotice(uiText(lang).novoice(domain.languages[l] || l));
   }
 

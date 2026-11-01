@@ -78,6 +78,16 @@ export async function transcribe(blob, language, ext = "webm") {
   return fetch("/api/voice/transcribe", { method: "POST", body: fd }).then(j);
 }
 
+/** Natural read-aloud audio from the server, or null (no key / service down: the caller uses the browser voice). */
+export async function speechAudio(text, language, pace, signal) {
+  try {
+    const r = await fetch("/api/voice/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, language, pace }), signal });
+    return r.ok ? await r.blob() : null;
+  } catch {
+    return null;
+  }
+}
+
 export const liveCheck = (place, crop) => fetch(`/api/live-check?place=${encodeURIComponent(place)}&crop=${encodeURIComponent(crop)}`).then(j);
 export const locate = (lat, lon) => fetch(`/api/locate?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`).then(j);
 

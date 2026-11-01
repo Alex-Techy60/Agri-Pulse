@@ -50,6 +50,14 @@ class Domain:
     # (question, profile) -> the text to search documents with: native-script terms in the documents' language, the resolved crop
     retrieval_query: Callable[[str, dict], str] | None = None
     knowledge_intents: set[str] = field(default_factory=set)  # intents that retrieve documents; empty = all (an MSP paragraph has no place in a rain answer)
+    # intent -> the only card types shown for it (a planner-added tool must not put a 7-day forecast under a price answer); missing = all
+    intent_cards: dict[str, set[str]] = field(default_factory=dict)
+    # intent -> tools that still RUN (they show in the trace and feed cross-checks) but whose text, cards and sources stay out of the answer
+    quiet_tools: dict[str, set[str]] = field(default_factory=dict)
+    # intent -> language -> next questions offered under the answer (fixed text, chosen in code; other languages get English)
+    follow_ups: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # intent -> source-file prefixes allowed for it (a PM-Kisan file name under a price answer is noise); missing = all
+    knowledge_sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
     label_text: dict[str, dict[str, str]] = field(default_factory=dict)  # language -> {RULE_LABEL: phrase in that language}
     question_overrides: Callable[[dict, dict, str], dict] | None = None
     # (profile as the form had it, what the question overrode, language) -> a short correction shown above the answer, or ""

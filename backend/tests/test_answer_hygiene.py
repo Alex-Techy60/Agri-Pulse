@@ -189,3 +189,13 @@ def test_internal_failure_tags_are_not_shown():
 def test_published_conditions_are_still_allowed():
     ans = "Any farmer family that owns cultivable land is eligible, as the instalment document says. The agriculture office decides each case."
     assert not run_all(DOMAIN.validators, ans, CTX)
+
+
+def test_the_answer_leads_with_one_short_line():
+    from app.domain.farm import short_first_line
+
+    check = short_first_line()
+    assert check("No clear signal: prices are steady this week.\n\nYour mandi price today is Rs 3750 (data.gov.in Agmarknet).") == []
+    assert check("Which crop are you growing?") == []  # a one-line question has no details below it
+    long = "Your own mandi price at Pune Pimpri on 2026-10-31 is Rs 3750 per quintal and the state median is Rs 3800 which is higher than yours"
+    assert check(long + "\nBest price is Rs 5000.") != []

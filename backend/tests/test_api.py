@@ -26,9 +26,6 @@ def test_localized_suggested_prompts_are_for_supported_languages_and_match_the_e
     assert all(len(v) == len(DOMAIN.suggested_prompts) for v in DOMAIN.suggested_prompts_by_lang.values())
 
 
-def test_crop_dropdown_has_one_name_per_commodity():
+def test_profile_form_has_no_crop_field():
     from app.domain.farm import DOMAIN
-    from app.tools.mandi import ALIASES
-    opts = next(f["options"] for f in DOMAIN.profile_fields if f["key"] == "crop")
-    assert len({ALIASES[o.lower()] for o in opts}) == len(opts)  # no two options price the same commodity
-    assert {"Soybean", "Onion", "Tomato"} <= set(opts) and "Soyabean" not in opts
+    assert [f["key"] for f in DOMAIN.profile_fields] == ["place"]  # the crop comes from the question

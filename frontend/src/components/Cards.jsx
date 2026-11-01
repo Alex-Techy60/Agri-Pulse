@@ -61,7 +61,6 @@ function Forecast({ c, lang }) {
         ))}
       </div>
       <AlertList lang={lang} alerts={(c.flags || []).map((f) => ({ key: f?.flag, day: f?.day }))} />
-      {c.soil_moisture != null && <small>{t.soilTop}: {c.soil_moisture} m³/m³</small>}
     </div>
   );
 }

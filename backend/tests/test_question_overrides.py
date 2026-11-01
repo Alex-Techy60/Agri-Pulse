@@ -74,3 +74,13 @@ def test_a_crop_the_code_does_not_know_comes_from_the_router_not_from_the_profil
     o2.run("What is the weather?", profile={"place": "Pune", "crop": "Onion"})  # the router named a crop the user never wrote: dropped
     assert seen2[0]["crop"] == "Onion"
     assert question_overrides({"crop": "Onion"}, {"crop": "okra"}, "price of okra") == {"crop": "Okra"}
+
+
+def test_two_crops_and_no_profile_crop_asks_instead_of_picking_one():
+    import pytest
+    from app.tools import NeedsInput
+    from app.tools.mandi import commodity_name
+    with pytest.raises(NeedsInput):
+        commodity_name({}, "Should I sell tomatoes or potatoes?")
+    assert commodity_name({}, "price of onion today") == "Onion"
+    assert commodity_name({"crop": "Onion"}, "tomatoes or potatoes?") == "Onion"  # an API client's profile crop still wins

@@ -75,6 +75,7 @@ def script_lang(text: str) -> str:
 TEXT_PROFILE_KEYS = ("place", "crop", "state", "district", "sowing_date")
 NUM_PROFILE_KEYS = ("lat", "lon")
 HISTORY_MAX_SESSIONS = 1000
+FOLLOWUP_MAX_WORDS = 3  # "onion", "in Pune", "Nashik, Maharashtra": a reply to a question, not a new one
 OFFLINE_MARK = "(AI summary unavailable - showing live data only)"
 OFFLINE_MAX_CHARS = 6000  # the raw data is folded in the UI, so it can be fuller; it is cut at a line end, never mid-number
 REQUEST_DEADLINE_S = 70.0  # hard stop for LLM calls: the UI gives up at 90 s, so a slow provider chain must end before that
@@ -124,6 +125,7 @@ class ChatResult:
     live_sources: list[dict] = field(default_factory=list)  # {name,url,fetched_at,stale}
     cards: list[dict] = field(default_factory=list)  # forecast / price cards for the UI
     profile: dict = field(default_factory=dict)  # resolved place/state/lat/lon + crop
+    follow_ups: list[str] = field(default_factory=list)  # next questions the farmer can tap; none while we wait for a missing input
     live_only: bool = False  # the AI was unavailable: `answer` is the raw live data, so the UI shows the cards first and the text folded
 
     def dict(self) -> dict:
@@ -139,6 +141,7 @@ class Orchestrator:
         self.planner = Planner(self.llm, self.domain)
         self.history: dict[str, deque] = defaultdict(lambda: deque(maxlen=self.s.history_turns * 2))
         self.profiles: OrderedDict[str, dict] = OrderedDict()  # session -> {place, crop}; in-process, capped
+        self.pending: OrderedDict[str, str] = OrderedDict()  # session -> intent whose question was left waiting for an input; capped
         self._lock = threading.Lock()  # request threads share profiles/history
 
     # ------------------------------------------------------------------ API
@@ -156,6 +159,7 @@ class Orchestrator:
         with self._lock:
             self.history.pop(session_id, None)
             self.profiles.pop(session_id, None)
+            self.pending.pop(session_id, None)
         try:
             self.store.forget_session(session_id)
         except Exception:  # memory is best-effort, like everywhere else in the pipeline
@@ -232,6 +236,12 @@ class Orchestrator:
         intent, lang, why, r_deg, named = self._route(text, language)
         degraded |= r_deg
         yield step("Router", f"intent={intent.name}", f"lang={lang}; {why}", t0)
+        with self._lock:
+            waiting = self.pending.pop(session_id, None) if session_id != "default" else None
+        if waiting and waiting != intent.name and len(text.split()) <= FOLLOWUP_MAX_WORDS and not self._keyword_hit(text):
+            # "onion" answers the "which crop?" just asked: it is not a new question, so the earlier intent stays
+            intent = next(i for i in self.domain.intents if i.name == waiting) if any(i.name == waiting for i in self.domain.intents) else intent
+            yield step("Router", f"follow-up keeps intent={intent.name}", "short reply to the question just asked")
 
         # What the question itself names beats the profile form for this turn (the stored profile is not changed).
         ui_profile = dict(profile)
@@ -255,6 +265,9 @@ class Orchestrator:
             except Exception as e:  # NeedsInput or an unexpected tool bug: never crash the pipeline
                 return name, None, e, int((time.time() - t) * 1000)
 
+        quiet = self.domain.quiet_tools.get(intent.name, set())
+        quiet_results: dict[str, ToolResult] = {}  # ran and traced, but nothing of it reaches the answer (only location, for the profile)
+
         def consume(outs):
             nonlocal degraded
             events = []
@@ -263,9 +276,13 @@ class Orchestrator:
                     missing[err.field] = err.hint
                     events.append(step("Tool", f"{name}: needs {err.field}", err.hint, ms=ms))
                 elif err is not None:
-                    failed.append(name)
-                    degraded = True
+                    if name not in quiet:  # a quiet tool's crash must not cost the farmer the price decision
+                        failed.append(name)
+                        degraded = True
                     events.append(step("Tool", f"{name} crashed", f"{type(err).__name__}: {err}", ms=ms, ok=False))
+                elif name in quiet:
+                    quiet_results[name] = tr
+                    events.append(step("Tool", f"{name} (used only if it changes the advice)", tr.text.splitlines()[0] if tr.text else "", ms=ms, ok=tr.ok))
                 else:
                     results[name] = tr
                     stale = any(s.get("stale") for s in tr.sources)
@@ -279,7 +296,7 @@ class Orchestrator:
         if names:
             with ThreadPoolExecutor(max_workers=len(names)) as ex:
                 outs = list(ex.map(call, names))
-            again = planner_mod.retryable(outs)
+            again = [n for n in planner_mod.retryable(outs) if n not in quiet]  # no waiting to retry a source the answer does not need
             if again:  # re-plan: one retry for unreachable sources before telling the user
                 t0 = time.time()
                 time.sleep(planner_mod.RETRY_DELAY_S)
@@ -300,6 +317,16 @@ class Orchestrator:
             for ev in consume([call(name)]):
                 yield ev
 
+        if session_id != "default":  # the next short reply answers this question
+            with self._lock:
+                if missing:
+                    self.pending[session_id] = intent.name
+                    self.pending.move_to_end(session_id)
+                    while len(self.pending) > HISTORY_MAX_SESSIONS:
+                        self.pending.popitem(last=False)
+                else:
+                    self.pending.pop(session_id, None)
+
         tool_ctx = ([image_ctx] if image_ctx else []) + [r.text for r in results.values()]
         if missing:
             tool_ctx.append("MISSING INFO: ask the user, in one friendly question, for: " + "; ".join(f"{k} ({h})" for k, h in missing.items()) + ". Say nothing else: no risk flags, no advice, no data.")
@@ -312,9 +339,12 @@ class Orchestrator:
                 if k not in seen:
                     seen.add(k)
                     live_sources.append(s)
-        cards = image_cards + [c for r in results.values() for c in r.cards]
+        shown = self.domain.intent_cards.get(intent.name)
+        cards = image_cards + [c for r in results.values() for c in r.cards if shown is None or c.get("type") in shown]
+        if missing:  # the answer is a question: data cards and source chips beside it would be unrelated
+            cards, live_sources = image_cards, []
         resolved = dict(profile)
-        for r in results.values():
+        for r in [*results.values(), *quiet_results.values()]:
             loc = r.facts.get("location")
             if loc:
                 resolved.update({"place": loc["name"], "state": loc["state"], "district": loc["district"], "lat": loc["lat"], "lon": loc["lon"]})
@@ -326,6 +356,9 @@ class Orchestrator:
         try:
             if self.store.count(KNOWLEDGE) and (not self.domain.knowledge_intents or intent.name in self.domain.knowledge_intents):
                 kb = self.store.search(KNOWLEDGE, self.domain.retrieval_query(text, profile) if self.domain.retrieval_query else text)
+                only = self.domain.knowledge_sources.get(intent.name)
+                if only:  # a price answer uses documents only for the support price
+                    kb = [h for h in kb if h.source.startswith(only)]
             if session_id != "default":  # the shared anonymous session must never see another caller's questions
                 mem = self.store.search(MEMORY, text, k=2, session_id=session_id)
         except Exception as e:
@@ -416,7 +449,9 @@ class Orchestrator:
             except Exception:
                 pass
 
-        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved, live_only=answer.startswith(OFFLINE_MARK))}
+        nexts = {} if missing else self.domain.follow_ups.get(intent.name, {})
+        follow = nexts.get(lang) or nexts.get("en", [])
+        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved, follow_ups=list(follow), live_only=answer.startswith(OFFLINE_MARK))}
 
     # -------------------------------------------------------------- internals
     def _route(self, text: str, language: str | None) -> tuple[Intent, str, str, bool, dict]:
@@ -443,6 +478,11 @@ class Orchestrator:
             if sc > score:
                 best, score = i, sc
         return best, language or script_lang(text), "keyword fallback", True, {}
+
+    def _keyword_hit(self, text: str) -> bool:
+        """The message itself carries a clear intent word (sell, rain, scheme...), so it is a new question."""
+        low = text.lower()
+        return any(_has_keyword(k, low) for i in self.domain.intents for k in i.keywords)
 
     def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str, roman: bool = False) -> list[dict]:
         system = (

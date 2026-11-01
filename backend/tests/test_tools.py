@@ -602,3 +602,30 @@ def test_flat_prices_are_shown_to_the_model_as_steady_never_as_neutral(monkeypat
     r = mandi_mod.mandi("", {"place": "Nashik", "crop": "onion"})
     sig_line = next(l for l in r.text.splitlines() if l.startswith("SIGNAL"))
     assert r.facts["price"]["signal"] == "NEUTRAL" and "STEADY" in sig_line and "NEUTRAL" not in sig_line
+
+
+def test_cross_check_brings_weather_in_only_as_a_cited_heavy_rain_note_and_no_card():
+    install(routes_ok)  # 70 mm on day 2
+    r = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
+    assert r.cards == [] and "heavy rain (70.0 mm)" in r.text and "Open-Meteo forecast, fetched 2026-11-01T10:00:00Z" in r.text
+    assert [s["name"] for s in r.sources] == ["Open-Meteo forecast"]
+
+
+def test_cross_check_without_rain_adds_no_weather_text_or_source():
+    def dry(url, params):
+        return forecast() if "open-meteo" in url and "geocoding" not in url else routes_ok(url, params)
+
+    install(dry)
+    r = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
+    assert r.sources == [] and r.cards == [] and "rain" not in r.text.lower().replace("not a forecast", "")
+
+
+def test_cross_check_keeps_the_price_decision_when_weather_is_down():
+    def no_weather(url, params):
+        if "open-meteo" in url and "geocoding" not in url:
+            raise SourceUnavailable("forecast down")
+        return routes_ok(url, params)
+
+    install(no_weather)
+    r = mandi_mod.cross("", {"place": "Nashik", "crop": "onion"})
+    assert r.ok and r.text.startswith("DECISION (computed in code)") and r.sources == []

@@ -1,12 +1,14 @@
 import json
 import logging
 import secrets
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 
 import httpx
 from fastapi.concurrency import run_in_threadpool
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.orchestrator import ChatResult, TraceStep, get_orchestrator
@@ -14,6 +16,7 @@ from app.api.ratelimit import enforce
 from app.auth import google as auth
 from app.core import stats
 from app.core.config import get_settings, llm_keys
+from app.llm import tts
 from app.llm.client import get_llm
 from app.memory.chats import CHAT_ID, get_chats, owner_key
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
@@ -56,6 +59,7 @@ def health():
         "llm_configured": bool(llm_keys(s)),
         "mandi_key_configured": bool(s.data_gov_api_key),
         "fallback_configured": bool(s.fallback_api_key),
+        "tts_configured": tts.available(),
         "knowledge_chunks": st.count(KNOWLEDGE),
         "memories": st.count(MEMORY),
     }
@@ -85,13 +89,23 @@ def _scoped_session(owner: str | None, body: ChatIn) -> str:
     return sid
 
 
+SAVE_BUDGET_S = 4.0  # history is an extra: a slow or dead database must never hold back a finished answer
+_saver = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat-save")
+
+
 def _save_turn(owner: str | None, body: ChatIn, result: dict) -> None:
     """Only real answers are saved: the 'something went wrong' fallback and an empty question are not history."""
     if not owner or not body.message.strip() or any(t.get("agent") == "Pipeline" for t in result.get("trace", [])):
         return
     user_text = f"📷 {body.message}" if body.image_b64 else body.message
-    meta = {k: result.get(k) for k in ("cards", "live_sources", "sources", "degraded", "language", "live_only")}
-    result["message_id"] = get_chats().append_turn(owner, body.session_id, user_text, result["answer"], meta)  # additive: lets the UI attach feedback to this answer
+    meta = {k: result.get(k) for k in ("cards", "live_sources", "sources", "degraded", "language", "live_only", "follow_ups")}
+    job = _saver.submit(get_chats().append_turn, owner, body.session_id, user_text, result["answer"], meta)
+    try:
+        result["message_id"] = job.result(timeout=SAVE_BUDGET_S)  # additive: lets the UI attach feedback to this answer
+    except FutureTimeout:  # the save keeps going in the background; the farmer gets the answer now
+        log.warning("chat save slow (> %.0f s): answer sent without waiting", SAVE_BUDGET_S)
+    except Exception:
+        log.warning("chat save failed", exc_info=True)
 
 
 @router.post("/chat")
@@ -298,6 +312,22 @@ async def transcribe(request: Request, file: UploadFile = File(...), language: s
         log.warning("transcription failed: %s", type(e).__name__)  # type only: the message holds the provider URL
         busy = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
         return {"text": "", "error": "The speech service is busy. Please try again in a minute." if busy else "Speech recognition failed. Please type your question."}
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=8000)
+    language: str = "en"
+    pace: float = 1.0
+
+
+@router.post("/voice/speak")
+async def speak(request: Request, body: SpeakIn):
+    """Answer text -> natural MP3. 503 means 'use the browser voice instead'; the UI does exactly that."""
+    enforce(request, "voice")
+    audio = await run_in_threadpool(tts.speak, body.text, body.language, body.pace)  # seconds of network: off the event loop
+    if audio is None:
+        return JSONResponse({"error": "Natural voice unavailable"}, status_code=503)
+    return Response(audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/locate")

@@ -104,7 +104,7 @@ def test_settings_are_saved_per_person_validated_and_follow_the_account(client):
     body = {"lang": "mr", "speak": True, "rate": 1.25, "profile": {"place": "Nashik, Maharashtra", "crop": "Onion", "evil": "x", "sowing_date": "  "}}
     assert client.put("/api/settings", json=body, headers=browser).json() == {"saved": True}
     got = client.get("/api/settings", headers=browser).json()["settings"]
-    assert got == {"lang": "mr", "speak": True, "rate": 1.25, "profile": {"place": "Nashik, Maharashtra", "crop": "Onion"}}  # unknown/blank fields dropped
+    assert got == {"lang": "mr", "speak": True, "rate": 1.25, "profile": {"place": "Nashik, Maharashtra"}}  # unknown/blank fields dropped, and crop/sowing date are no longer profile fields
     client.put("/api/settings", json={"lang": "xx", "rate": 1}, headers=other)
     assert "lang" not in client.get("/api/settings", headers=other).json()["settings"]  # unknown language refused
     assert client.put("/api/settings", json={"rate": 99}, headers=other).status_code == 422
