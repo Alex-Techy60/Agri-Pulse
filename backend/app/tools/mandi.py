@@ -60,6 +60,9 @@ NATIVE_CROPS = {
     "कोथिंबीर": "coriander", "धनिया": "coriander", "मूग": "moong", "उडीद": "urad", "उड़द": "urad", "तूर": "tur", "अरहर": "arhar",
     "सफरचंद": "apple", "सेब": "apple", "आंबा": "mango", "आम": "mango", "लिंबू": "lemon", "नींबू": "lemon",
     "आले": "ginger", "अदरक": "ginger", "डाळिंब": "pomegranate", "अनार": "pomegranate", "द्राक्षे": "grapes", "अंगूर": "grapes",
+    # English crop names written in Devanagari: Hindi speech-to-text writes a spoken English word this way ("ओनियन", seen 1 Nov 2026)
+    "ओनियन": "onion", "अनियन": "onion", "ओनियंस": "onion", "टोमेटो": "tomato", "टोमाटो": "tomato", "टमातर": "tomato", "टोमैटो": "tomato",
+    "पोटेटो": "potato", "पोटैटो": "potato", "व्हीट": "wheat", "राइस": "rice", "कॉटन": "cotton", "गार्लिक": "garlic",  # not "बनाना": in Hindi it also means "to make"
 }
 _DEVANAGARI = "\u0900-\u097f"
 
@@ -119,7 +122,7 @@ def agmarknet_state(name: str) -> str:
 
 def commodity_name(profile: dict, text: str) -> str:
     crop = crop_key(profile.get("crop") or "")
-    if not crop and len(crops_in_text(text)) > 1:  # "onion or potato?": never pick one silently, ask which
+    if len(crops_in_text(text)) > 1:  # "onion or potato?": never pick one silently (not even a remembered crop), ask which
         raise NeedsInput("crop", "which ONE crop: the question names several")
     if not crop:
         low = (text or "").lower()
@@ -129,6 +132,20 @@ def commodity_name(profile: dict, text: str) -> str:
     if not crop:
         raise NeedsInput("crop", "which crop the farmer grows or wants to sell")
     return ALIASES.get(crop, crop.title())
+
+
+MAX_CROPS = 3  # each crop is 2-6 calls to a rate-limited free API, fetched one after another
+
+
+def commodity_names(profile: dict, text: str) -> list[str]:
+    """Agmarknet names for the crops a question asks about: all of them when it names 2-3 ("onion and potato prices"),
+    otherwise the one crop (question first, then profile)."""
+    named = crops_in_text(text)
+    if len(named) > MAX_CROPS:
+        raise NeedsInput("crop", f"at most {MAX_CROPS} crops at a time: the question names {len(named)}")
+    if len(named) > 1:
+        return [ALIASES.get(c, c.title()) for c in named]
+    return [commodity_name(profile, text)]
 
 
 def _norm(rec: dict) -> dict:
@@ -216,8 +233,32 @@ def get_mandi(profile: dict, text: str = "") -> ToolResult:
     loc = resolve_location(profile)
     if not loc["state"]:
         raise NeedsInput("state", "the state of the farm (the place could not be matched to a state)")
-    commodity = commodity_name(profile, text)
+    crops = commodity_names(profile, text)
+    if len(crops) == 1:
+        return _crop_prices(profile, loc, crops[0])
+    parts = []
+    for c in crops:  # one after another: a parallel burst gets rate limited (429) and trips the shared circuit breaker
+        try:
+            parts.append(_crop_prices(profile, loc, c))
+        except SourceUnavailable as e:  # one crop's failure must not hide the others' real prices
+            log.warning("mandi for %s unavailable: %s", c, type(e).__name__)
+            parts.append(ToolResult(f"MANDI PRICES for {c}: this live source did not answer for this crop. Say so for this crop and do not guess its price.", False))
+    sources, seen = [], set()
+    for r in parts:
+        for src in r.sources:
+            if src["name"] not in seen:  # one chip per source, not one per crop
+                seen.add(src["name"])
+                sources.append(src)
+    first = next((r.facts for r in parts if r.facts.get("location")), {})
+    return ToolResult(
+        f"PRICES FOR {len(crops)} CROPS ({', '.join(crops)}): give each crop its own short line with its decision and today's price.\n\n" + "\n\n".join(r.text for r in parts),
+        any(r.ok for r in parts), sources, [c for r in parts for c in r.cards],
+        {"location": first.get("location"), "crops": [{"commodity": c, **r.facts} for c, r in zip(crops, parts)]},
+    )
 
+
+def _crop_prices(profile: dict, loc: dict, commodity: str) -> ToolResult:
+    s = get_settings()
     state_name = agmarknet_state(loc["state"])
     records, f = _fetch_records(state_name, commodity, s.data_gov_api_key, s.mandi_resource_id, s.mandi_filter_style)
     fetched = [f] if f is not None else []
@@ -311,27 +352,33 @@ def _same_day(raw, iso: str) -> bool:
 
 
 def get_cross_check(profile: dict, text: str = "") -> ToolResult:
-    """Combines the (cached) price signal with the (cached) weather risk. Pure rules; no new data."""
+    """Combines the (cached) price signal with the (cached) weather risk. Pure rules; no new data. One decision per crop."""
     m = get_mandi(profile, text)
     try:  # weather only ever adds a heavy-rain note; without it the price decision still stands
         w = get_weather(profile)
     except Exception:
         w = None
-    price, wx = m.facts.get("price", {}), (w.facts.get("analysis", {}) if w else {})
-    notes = cross_check(price, wx, m.facts.get("position"))
+    wx = w.facts.get("analysis", {}) if w else {}
     src = next((s for s in (w.sources if w else []) if s.get("name") == "Open-Meteo forecast"), None)
-    decision = price.get("signal", "INSUFFICIENT_DATA")
-    pos = m.facts.get("position") or {}
-    if decision == "INSUFFICIENT_DATA":  # too few days of prices for a trend: say what we CAN decide on
-        where = f"MARKET POSITION {pos['label']} ({pos['pct_vs_state_median']} % vs state median)" if pos.get("label") else "no local market position either"
-        lines = [f"DECISION (computed in code): NO PRICE TREND (no comparable day about a week earlier); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal."]
-    else:
-        what = {"HOLD": "prices rising", "SELL_NOW": "prices falling", "NEUTRAL": "prices roughly steady"}.get(decision, decision)
-        lines = [f"DECISION (computed in code): {'STEADY' if decision == 'NEUTRAL' else decision} ({what}, {price.get('change_pct')} % in {price.get('window_days')} days; a recent trend, not a forecast)"]
-    rain = [n for n in notes if "heavy rain" in n]  # only a rain note brings the weather source into the answer
-    when = f" (Open-Meteo forecast, fetched {src['fetched_at']})" if rain and src else ""
-    lines += [f"NOTE: {n}{when if n in rain else ''}" for n in notes]
-    return ToolResult("\n".join(lines), True, [src] if rain and src else [], [], {"decision": decision, "notes": notes})
+    crops = m.facts.get("crops") or [{"commodity": "", **m.facts}]
+    lines, decisions, rain_notes = [], [], []
+    for c in crops:
+        price, pos = c.get("price", {}), c.get("position") or {}
+        notes = cross_check(price, wx, pos or None)
+        decision = price.get("signal", "INSUFFICIENT_DATA")
+        decisions.append(decision)
+        name = f" for {c['commodity']}" if len(crops) > 1 else ""
+        if decision == "INSUFFICIENT_DATA":  # too few days of prices for a trend: say what we CAN decide on
+            where = f"MARKET POSITION {pos['label']} ({pos['pct_vs_state_median']} % vs state median)" if pos.get("label") else "no local market position either"
+            lines.append(f"DECISION{name} (computed in code): NO PRICE TREND (no comparable day about a week earlier); {where}. Lead with today's position and the best-paying market; do not call this a sell or hold signal.")
+        else:
+            what = {"HOLD": "prices rising", "SELL_NOW": "prices falling", "NEUTRAL": "prices roughly steady"}.get(decision, decision)
+            lines.append(f"DECISION{name} (computed in code): {'STEADY' if decision == 'NEUTRAL' else decision} ({what}, {price.get('change_pct')} % in {price.get('window_days')} days; a recent trend, not a forecast)")
+        rain = [n for n in notes if "heavy rain" in n]  # only a rain note brings the weather source into the answer
+        when = f" (Open-Meteo forecast, fetched {src['fetched_at']})" if rain and src else ""
+        lines += [f"NOTE{name}: {n}{when if n in rain else ''}" for n in notes if n not in rain_notes]
+        rain_notes += rain
+    return ToolResult("\n".join(lines), True, [src] if rain_notes and src else [], [], {"decision": decisions[0] if len(decisions) == 1 else decisions, "notes": rain_notes})
 
 
 mandi = guarded("mandi")(lambda text, profile: get_mandi(profile, text))

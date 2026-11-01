@@ -83,4 +83,5 @@ def test_two_crops_and_no_profile_crop_asks_instead_of_picking_one():
     with pytest.raises(NeedsInput):
         commodity_name({}, "Should I sell tomatoes or potatoes?")
     assert commodity_name({}, "price of onion today") == "Onion"
-    assert commodity_name({"crop": "Onion"}, "tomatoes or potatoes?") == "Onion"  # an API client's profile crop still wins
+    with pytest.raises(NeedsInput):  # a profile crop must not silently answer a question about two other crops
+        commodity_name({"crop": "Onion"}, "tomatoes or potatoes?")

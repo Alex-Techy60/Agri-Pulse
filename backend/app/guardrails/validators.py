@@ -228,7 +228,17 @@ def plain_text(text: str, local: dict[str, str] | None = None) -> str:
     farmer: `local` maps a label to a phrase in the answer's own language; any label it lacks is written as plain English words."""
     local = local or {}
     swap = lambda m: local.get(m.group(0)) or _humanize(m)
-    return _LABEL.sub(swap, _MD_INLINE.sub("", _MD_LINE_START.sub("", text or ""))).strip()
+    return _drop_repeat(_LABEL.sub(swap, _MD_INLINE.sub("", _MD_LINE_START.sub("", text or ""))).strip())
+
+
+def _drop_repeat(text: str) -> str:
+    """The model sometimes writes its whole answer twice in a row (seen 1 Nov 2026); the farmer gets it once."""
+    mid = len(text) // 2
+    for cut in range(max(1, mid - 3), min(len(text), mid + 4)):
+        first, second = text[:cut].strip(), text[cut:].strip()
+        if len(first) >= 20 and first == second:
+            return first
+    return text
 
 
 def run_all(validators: list[Validator], text: str, context: str = "") -> list[str]:

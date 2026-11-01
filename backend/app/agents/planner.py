@@ -25,6 +25,8 @@ class Planner:
     def plan(self, text: str, profile: dict, intent: Intent) -> tuple[list[str], str, bool]:
         """Returns (tool_names, reason, used_fallback)."""
         base = list(self.domain.intent_tools.get(intent.name, []))
+        if intent.name in self.domain.intent_tools and not base:  # declared as needing no live data (a photo, a document)
+            return [], "this question needs no live data", False
         allowed = self._allowed()
         listing = "\n".join(f"- {n}: {self.domain.tool_help.get(n, '')}" for n in allowed)
         shown = {k: v for k, v in profile.items() if k in ("place", "crop")} or "not provided"

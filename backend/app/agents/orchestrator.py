@@ -142,6 +142,7 @@ class Orchestrator:
         self.history: dict[str, deque] = defaultdict(lambda: deque(maxlen=self.s.history_turns * 2))
         self.profiles: OrderedDict[str, dict] = OrderedDict()  # session -> {place, crop}; in-process, capped
         self.pending: OrderedDict[str, str] = OrderedDict()  # session -> intent whose question was left waiting for an input; capped
+        self.question_crops: OrderedDict[str, str] = OrderedDict()  # session -> last crop a question named; capped
         self._lock = threading.Lock()  # request threads share profiles/history
 
     # ------------------------------------------------------------------ API
@@ -160,6 +161,7 @@ class Orchestrator:
             self.history.pop(session_id, None)
             self.profiles.pop(session_id, None)
             self.pending.pop(session_id, None)
+            self.question_crops.pop(session_id, None)
         try:
             self.store.forget_session(session_id)
         except Exception:  # memory is best-effort, like everywhere else in the pipeline
@@ -212,6 +214,13 @@ class Orchestrator:
             if remembered:
                 profile = {**remembered, **profile}
                 yield step("Retriever", "remembered profile", ", ".join(f"{k}={v}" for k, v in remembered.items()))
+        asked_crop = ""  # a crop named in an earlier question of this chat, used only when no crop is set in the form
+        if session_id != "default" and not profile.get("crop"):
+            with self._lock:
+                asked_crop = self.question_crops.get(session_id, "")
+            if asked_crop:
+                profile["crop"] = asked_crop
+                yield step("Retriever", "remembered crop", f"crop={asked_crop} (named earlier in this chat)")
 
         # 1) Vision (optional) --------------------------------------------------
         image_ctx, image_cards = "", []
@@ -420,17 +429,17 @@ class Orchestrator:
 
         answer = plain_text(answer, None if roman else self.domain.label_text.get(lang))
 
-        # The question contradicts the form at the top (other crop or place): say so, in code, above the answer.
-        note = self.domain.contradiction_note(ui_profile, over, "en" if roman else lang) if self.domain.contradiction_note and over else ""
-        if note:
-            answer = f"{OFFLINE_MARK}\n\n{note}{answer[len(OFFLINE_MARK):]}" if answer.startswith(OFFLINE_MARK) else f"{note}\n\n{answer}"
-            yield step("Guardrail", "contradiction notice", ", ".join(f"{k}: {ui_profile.get(k)} -> {v}" for k, v in over.items()))
-
         # 6) Remember --------------------------------------------------------------
         if session_id != "default":
             keep = {}
-            if ui_profile.get("crop"):
+            if ui_profile.get("crop") and not asked_crop:  # a crop set in the form (API clients) is sticky
                 keep["crop"] = str(ui_profile["crop"])[:60]
+            if over.get("crop"):  # the UI sends no crop: the last one a question named carries over to "and should I sell?"
+                with self._lock:
+                    self.question_crops[session_id] = str(over["crop"])[:60]
+                    self.question_crops.move_to_end(session_id)
+                    while len(self.question_crops) > HISTORY_MAX_SESSIONS:
+                        self.question_crops.popitem(last=False)
             if ui_profile.get("place") and not over.get("place") and resolved.get("lat") is not None:  # only a place the live geocoder actually found
                 keep["place"] = str(ui_profile["place"])[:100]
             if keep:

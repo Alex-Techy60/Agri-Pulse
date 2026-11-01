@@ -13,7 +13,7 @@ from app.domain.diagnosis import BRAND_PATTERN, RATE_PATTERN, VISION_PROMPT, par
 from app.guardrails.validators import Validator, forbid_patterns, forbid_unless_negated, grounded_dates, grounded_numbers, grounded_units, max_words, numeric_limit
 from app.tools.crop_fit import crop_fit, table_key
 from app.tools.crop_stage import crop_stage
-from app.tools.location import FILLER
+from app.tools.location import FILLER, NATIVE_PLACES
 from app.tools.mandi import ALIASES, cross, crop_key, crops_in_text, mandi
 from app.tools.rain_history import rain_history
 from app.tools.soil import soil
@@ -63,7 +63,8 @@ def short_first_line() -> "Validator":
 def own_market_claim() -> "Validator":
     """The answer may call a market the farmer's own only when the tool found one whose name matches the farmer's place
     (YOUR MARKET line). Otherwise the model picks the first market of the district and calls it "your mandi"."""
-    claim = re.compile(r"\byour (?:own |local )?(?:market|mandi)\b|आपकी (?:अपनी )?मंडी|आपके (?:अपने )?(?:बाजार|मंडी)|तुमचा बाजार|तुमची मंडी|आपली मंडी|तुमच्या (?:बाजारात|मंडीत)", re.I)
+    # Hindi gender is often wrong in model output ("पुणे (आपका मंडी)", 1 Nov 2026), so every form of "your" is matched
+    claim = re.compile(r"\byour (?:own |local )?(?:market|mandi)\b|आप(?:का|की|के) (?:अपन(?:ा|ी|े) )?(?:मंडी|बाजार|बाज़ार)|तुम(?:चा|ची|चे|च्या) (?:मंडी|बाजार)\w*|आपल(?:ा|ी|े|्या) (?:मंडी|बाजार)\w*", re.I)
 
     def check(text: str, context: str = "") -> list[str]:
         if claim.search(text) and "YOUR MARKET" not in context:
@@ -80,8 +81,61 @@ def no_advice_on_neutral() -> "Validator":
     advice = re.compile(r"\byou\s+(?:may|can|could|might|should|may\s+want\s+to)\s+(?:hold|wait|keep|store|delay|sell)\b|\b(?:better|best)\s+to\s+(?:hold|wait|sell)\b", re.I)
 
     def check(text: str, context: str = "") -> list[str]:
-        if ("SIGNAL (computed in code): STEADY" in context or "SIGNAL (computed in code): NEUTRAL" in context) and advice.search(text):
+        some_trend = re.search(r"SIGNAL \(computed in code\): (?:HOLD|SELL_NOW)", context)  # several crops: one may rise while another is steady
+        if ("SIGNAL (computed in code): STEADY" in context or "SIGNAL (computed in code): NEUTRAL" in context) and not some_trend and advice.search(text):
             return ["The signal is NEUTRAL: do not tell the farmer to hold, wait or sell. Say the data does not point either way and leave the choice to the farmer."]
+        return []
+
+    check.wants_context = True  # type: ignore[attr-defined]
+    return check
+
+
+def no_steady_without_trend() -> "Validator":
+    """With no comparable earlier day there is no trend at all, so "prices are steady / did not change" is an invented fact.
+    Seen 1 Nov 2026 for bajra: the card said "trend not available", the answer said "no change in the last 7 days"."""
+    steady = re.compile(
+        r"\b(?:steady|stable|unchanged|flat)\b|\bno\s+(?:real\s+|clear\s+|big\s+)?(?:change|movement)\b|\bdid\s+not\s+(?:change|move)\b"
+        r"|स्थिर|बदलाव\s+नहीं|कोई\s+बदलाव|बदल\s+नाही|बदल\s+झाला\s+नाही|फरक\s+नाही|एकसारख",
+        re.I,
+    )
+
+    def check(text: str, context: str = "") -> list[str]:
+        # only when NO crop has a trend: in a several-crop answer another crop may really be steady
+        if ("NO PRICE TREND" in context or "SIGNAL: INSUFFICIENT_DATA" in context) and "SIGNAL (computed in code)" not in context and steady.search(text):
+            return ["There is NO price trend in CONTEXT, so do not say prices are steady, stable or unchanged. Say plainly that no price trend is available today, then give today's prices."]
+        return []
+
+    check.wants_context = True  # type: ignore[attr-defined]
+    return check
+
+
+def never_ask_for_prices() -> "Validator":
+    """The app fetches prices; asking the farmer to supply them ("tell me the mandi prices, then I will suggest", 1 Nov 2026)
+    turns the advisor upside down and invites made-up numbers."""
+    ask = re.compile(
+        # "me" is required: "I cannot tell the price next week" is the correct refusal, not a request
+        r"\b(?:tell|give|share|send)\s+me\s+(?:the\s+)?(?:current\s+|today'?s\s+|latest\s+)?(?:mandi\s+|market\s+)?(?:prices?|rates?)\b"
+        r"|(?:कीमत|भाव|दाम|रेट)[\u0900-\u097f]*\s+(?:मुझे\s+)?(?:बताइए|बताइये|बताएं|बताएँ|बताओ|बता\s+दीजिए|बता\s+दें)"
+        r"|(?:भाव|किंमत|दर)[\u0900-\u097f]*\s+(?:मला\s+)?(?:सांगा|कळवा)",
+        re.I,
+    )
+
+    def check(text: str) -> list[str]:
+        if ask.search(text):
+            return ["Asks the farmer for prices. Never do that: the app fetches prices itself. Ask only for what MISSING INFO names (for example which ONE crop), or say the price is not available."]
+        return []
+
+    return check
+
+
+def missing_info_is_a_question() -> "Validator":
+    """When an input is missing (no crop, or several crops) no tool ran, so "price data not available" is false: the answer
+    must be the one question. Seen 1 Nov 2026: "No clear signal: price data not available now" for a question with no crop."""
+    unavailable = re.compile(r"not\s+available|unavailable|no\s+(?:price\s+)?data|उपलब्ध\s+नहीं|उपलब्ध\s+नाही|माहिती\s+नाही", re.I)
+
+    def check(text: str, context: str = "") -> list[str]:
+        if "MISSING INFO" in context and ("?" not in text or unavailable.search(text)):
+            return ["An input is missing, so no data was looked up yet. Do not say data is unavailable. Reply with ONE short friendly question asking for exactly what MISSING INFO names."]
         return []
 
     check.wants_context = True  # type: ignore[attr-defined]
@@ -133,6 +187,13 @@ def retrieval_query(text: str, profile: dict) -> str:
     return " ".join([text, *extra, *sorted(names)])
 
 
+# Only for telling whether the question's place is the one at the top ("नासिक" = "Nashik"); the geocoder finds these itself.
+SAME_PLACE = {
+    **NATIVE_PLACES, "नाशिक": "Nashik", "नासिक": "Nashik", "पुणे": "Pune", "नागपूर": "Nagpur", "नागपुर": "Nagpur",
+    "कोल्हापूर": "Kolhapur", "कोल्हापुर": "Kolhapur", "सोलापूर": "Solapur", "सोलापुर": "Solapur", "लातूर": "Latur",
+}
+
+
 def question_overrides(profile: dict, named: dict, text: str) -> dict:
     """A farmer who asks "price of tomato in Pune" wants Pune and tomato, whatever the profile form still says.
 
@@ -147,35 +208,10 @@ def question_overrides(profile: dict, named: dict, text: str) -> dict:
     if crop and crop_key(crop) != crop_key(profile.get("crop", "")):
         over["crop"] = crop
     place = " ".join((named.get("place") or "").split())
-    if place and place.lower() not in FILLER and place.lower() not in (profile.get("place") or "").lower():
+    same = SAME_PLACE.get(place, place).lower()  # "नासिक" in the question is the "Nashik" at the top
+    if place and place.lower() not in FILLER and same not in (profile.get("place") or "").lower():
         over["place"] = place
     return over
-
-
-# Shown above the answer when the question contradicts the form at the top. Written in code, not by the LLM, so the farmer is
-# always told which crop/place the answer is really about. Languages not listed here get English.
-CONTRADICTION_TEXT = {
-    "en": {
-        "place": "You set {old} at the top, but you asked about {new}, so I answered for {new}. If you meant {old}, ask again naming it, or change the place at the top.",
-    },
-    "hi": {
-        "place": "आपने ऊपर जगह {old} रखी है, लेकिन आपने {new} के बारे में पूछा, इसलिए मैंने {new} के लिए जवाब दिया। अगर आपका मतलब {old} था, तो उसका नाम लेकर फिर पूछें या ऊपर जगह बदलें।",
-    },
-    "mr": {
-        "place": "तुम्ही वर ठिकाण {old} ठेवले आहे, पण तुम्ही {new} बद्दल विचारले, म्हणून मी {new} साठी उत्तर दिले. तुम्हाला {old} अभिप्रेत असल्यास, त्याचे नाव घेऊन पुन्हा विचारा किंवा वर ठिकाण बदला.",
-    },
-}
-
-
-def contradiction_note(ui_profile: dict, over: dict, lang: str) -> str:
-    """Tell the farmer when the question names a different place than the form at the top, and which one was used.
-    Only a real contradiction counts: if the form was empty there is nothing to correct."""
-    texts = CONTRADICTION_TEXT.get(lang, CONTRADICTION_TEXT["en"])
-    notes = []
-    old_place, new_place = (ui_profile.get("place") or "").strip(), over.get("place", "")
-    if old_place and new_place:
-        notes.append(texts["place"].format(old=old_place, new=new_place))
-    return " ".join(notes)
 
 
 LABEL_TEXT = {
@@ -211,15 +247,15 @@ DOMAIN = Domain(
     tagline="Live weather, soil and mandi prices -> clear advice in your language.",
     persona=PERSONA,
     intents=[
-        Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Never say or imply what prices will do next: if asked to predict or promise a price, say plainly that you cannot forecast prices and give only the past-week trend. Never call a market the farmer's own unless CONTEXT has a YOUR MARKET line; otherwise say 'markets in <district>'. If CONTEXT has an MSP row for the farmer's crop from an official document, mention it as the government's support price beside the mandi price (name the document and date); it is a reference, not a prediction or advice. The first line gives the DECISION from CONTEXT in plain words: for SELL_NOW 'Yes, selling now looks better', for HOLD 'No, prices are rising, holding looks better', for STEADY 'No clear signal: prices are steady this week', with no trend 'No price trend is available today'. If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. When the DECISION is STEADY, say plainly that prices show no clear rise or fall over the week, so the data does not point to selling now or to waiting. When there is NO PRICE TREND or no price data at all, say that no trend (or no price) is available and never call prices neutral or steady. In both cases give the prices and market position you have, and leave the choice to the farmer. Say hold or sell as advice ONLY when the DECISION is HOLD or SELL_NOW: never write 'you may hold', 'you can wait' or similar. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest. Keep it short and to the point: after the first line give only (1) how much prices moved in the last 7 days, (2) the farmer's own market price, or the district price, today, (3) the best price in the state and where, (4) the heavy-rain note only if there is one, then the source line. Never explain the 5 % rule or how the signal is computed (the card shows it), never list other markets, and never mention that today's reports are still arriving. Do NOT mention weather, temperature, humidity, wind or irrigation unless CONTEXT has a NOTE about heavy rain; if it does, say it in one sentence. If there is no such note, say nothing at all about rain or weather, not even that there is none. The best-paying market is the highest in the whole state, so never call it a market in the farmer's district unless CONTEXT says so. Never print rule labels written in CAPITAL_LETTERS_WITH_UNDERSCORES; say them in plain words.", ["sell", "hold", "wait", "store", "बेच", "भाव कब", "विक", "थांब", "साठव", "रुक", "bech", "ruk jaun", "ruk jau", "kab bech", "go up", "go down", "come down", "will prices", "बढ़ेंगे", "गिरेंगे", "वाढतील", "घसरतील", "badhenge", "girenge"]),
-        Intent("market_price", "today's mandi / market price of a crop, price trend", "If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. If CONTEXT has an MSP row for the farmer's crop from an official document, also give it as the government's support price (name the document and date); it is a reference, not a prediction. Then the trend and the highest markets. Mention the unit (Rs per quintal) and the date. Never present the state-wide average as the price in the farmer's own market.", ["price", "rate", "mandi", "bhav", "भाव", "दाम", "दर", "किंमत", "कीमत", "बाजार", "मंडी", "bhaav", "daam"]),
+        Intent("sell_or_hold", "should I sell my crop now or wait / hold / store; best time or place to sell", "Never say or imply what prices will do next: if asked to predict or promise a price, say plainly that you cannot forecast prices and give only the past-week trend. If asked how much profit or money selling now or later will bring, say plainly in the first line that you cannot predict profit, then give today's prices. If CONTEXT has PRICES FOR several CROPS, start with one short line naming the crops, then one or two short lines per crop (its decision in plain words and today's price). Never call a market the farmer's own unless CONTEXT has a YOUR MARKET line; otherwise say 'markets in <district>'. If CONTEXT has an MSP row for the farmer's crop from an official document, mention it as the government's support price beside the mandi price (name the document and date); it is a reference, not a prediction or advice. The first line gives the DECISION from CONTEXT in plain words: for SELL_NOW 'Yes, selling now looks better', for HOLD 'No, prices are rising, holding looks better', for STEADY 'No clear signal: prices are steady this week', with no trend 'No price trend is available today'. If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. When the DECISION is STEADY, say plainly that prices show no clear rise or fall over the week, so the data does not point to selling now or to waiting. When there is NO PRICE TREND or no price data at all, say that no trend (or no price) is available and never call prices neutral or steady. In both cases give the prices and market position you have, and leave the choice to the farmer. Say hold or sell as advice ONLY when the DECISION is HOLD or SELL_NOW: never write 'you may hold', 'you can wait' or similar. If it says there is no price trend, lead with today's MARKET POSITION (how the farmer's district compares with the state median) and the best-paying market, and say plainly that no trend is available. Then any weather risk note, then where prices are highest. Keep it short and to the point: after the first line give only (1) how much prices moved in the last 7 days, (2) the farmer's own market price, or the district price, today, (3) the best price in the state and where, (4) the heavy-rain note only if there is one, then the source line. Never explain the 5 % rule or how the signal is computed (the card shows it), never list other markets, and never mention that today's reports are still arriving. Do NOT mention weather, temperature, humidity, wind or irrigation unless CONTEXT has a NOTE about heavy rain; if it does, say it in one sentence. If there is no such note, say nothing at all about rain or weather, not even that there is none. The best-paying market is the highest in the whole state, so never call it a market in the farmer's district unless CONTEXT says so. Never print rule labels written in CAPITAL_LETTERS_WITH_UNDERSCORES; say them in plain words.", ["sell", "hold", "wait", "store", "बेच", "भाव कब", "विक", "थांब", "साठव", "रुक", "bech", "ruk jaun", "ruk jau", "kab bech", "go up", "go down", "come down", "will prices", "बढ़ेंगे", "गिरेंगे", "वाढतील", "घसरतील", "badhenge", "girenge"]),
+        Intent("market_price", "today's mandi / market price of a crop, price trend", "If CONTEXT has PRICES FOR several CROPS, give each crop its own short line. If CONTEXT has a YOUR MARKET line, give that price first: it is the farmer's own mandi. If CONTEXT has an MSP row for the farmer's crop from an official document, also give it as the government's support price (name the document and date); it is a reference, not a prediction. Then the trend and the highest markets. Mention the unit (Rs per quintal) and the date. Never present the state-wide average as the price in the farmer's own market.", ["price", "rate", "mandi", "bhav", "भाव", "दाम", "दर", "किंमत", "कीमत", "बाजार", "मंडी", "bhaav", "daam"]),
         Intent("weather_advice", "weather, rain, heat, wind, irrigation, spraying, protecting crop this week", "Lead with any RISK FLAG, then spray-safe days, then irrigation advice, using only CONTEXT. If CONTEXT has a WATER BALANCE line, say in plain words whether the coming rain covers the crop's water demand and by how many mm; it is a reference figure, not the exact need of the crop. The data has no hail, frost or storm warning: if asked about those, give only the rain, wind and temperature numbers in CONTEXT, say plainly that there is no warning for them in this data, and tell the farmer to check the official IMD warning or the local agriculture officer. Never say a hailstorm or storm will or will not come.", ["weather", "rain", "spray", "irrigat", "wind", "heat", "forecast", "मौसम", "बारिश", "पाऊस", "हवामान", "फवारणी", "छिड़क", "सिंचाई", "सिंचन", "तापमान", "baarish", "barish", "mausam", "dawai", "chhidk", "water my", "water the", "watering", "hail", "frost", "cold wave", "storm", "temperature", "how hot", "protect", "पानी देना", "पानी दे", "ओले", "तूफान", "पाले", "गारपीट", "पाणी द", "वादळ", "थंडीची लाट", "paani", "pani dena", "garmi", "thand", "toofan"]),
         Intent("crop_suggest", "which crop to grow or sow now, what is suitable for my place, best time to sow, when will my crop be ready to harvest",
                "If CONTEXT has a SOWN line, START the answer with it: the sowing date, the days since sowing, the expected harvest dates and the STAGE in plain words (never write the labels SOWN or STAGE), before anything else. For the farmer's own sowing use ONLY the harvest dates in the SOWN line; the harvest dates in the other lines belong to a NEW sowing and must not be mixed into it. Use ONLY the CROP FIT lines in CONTEXT. List the suitable crops with their temperature fit, sowing date, harvest window and whether rain or irrigation covers the need; say these are crops that fit the climate, not a ranking by profit, and that soil, variety, water supply and prices are not included. For the farmer's own crop give the sowing windows and, if a SOWN line exists, say whether it is before, inside or past the usual harvest window. If CONTEXT has SOIL lines, give the pH and texture as a 250 m model estimate (not a measurement of the field), the SOIL FIT for the farmer's crop, and the crops the soil does not suit; never judge the soil beyond those lines. Tell the farmer to confirm with the local agriculture officer or KVK and, for the soil, to get a soil test. Never name a crop, date or cycle that is not in CONTEXT.",
                ["which crop", "what crop", "what to grow", "what to plant", "what should i sow", "what should i grow", "suitable crop", "best crop", "when to sow", "when to plant", "when to harvest", "ready to harvest", "कौन सी फसल", "कौन सा फसल", "क्या उगाऊं", "क्या लगाऊं", "कब बोएं", "कब बोना", "कब काटें", "कटाई कब", "कोणते पीक", "कोणतं पीक", "काय पेरू", "कधी पेरावे", "कधी काढणी", "काढणी कधी", "kaun si fasal", "kab boyen", "kab kaatein", "konsa pik", "what should i plant", "plant this season", "should i sow", "should i plant", "when should i sow", "when should i plant", "best time to plant", "best time to sow", "time to harvest", "crop is best", "crop best", "best for my soil", "best for black soil", "grow in", "can i grow", "rabi", "kharif", "soil good for", "soil ph", "ph level", "ph value", "फसल लगाऊं", "लगाऊं", "कब काटनी", "फसल कब", "रब्बी", "खरीफ", "मिट्टी का ph", "कधी लाव", "कधी पेर", "कधी काढ", "पीक कधी", "मातीचा ph", "रब्बी", "ropni", "ropai", "kab lagaun", "kab lagayen", "lagaun", "fasal kab", "kya lagau", "kya ugau"]),
         Intent("sow_or_crop_care", "soil moisture, crop care and field work this week", "Use soil moisture and the 7-day rain outlook from CONTEXT. If CONTEXT has CROP FIT lines, use them for the sowing window and harvest window of the farmer's crop (a climate guide, to be confirmed with the agriculture officer); say what is not available (no crop calendar data unless in CONTEXT).", ["sow", "plant", "harvest", "soil", "seed", "बुवाई", "कटाई", "पेरणी", "काढणी", "माती", "मिट्टी"]),
         Intent("scheme_info", "a government scheme, subsidy, minimum support price (MSP), PM-KISAN, crop insurance (PMFBY), how much is paid, who gets it",
-               "Answer ONLY from the official documents in CONTEXT (each starts with its title and date in square brackets). Name the document and its date. Quote amounts and dates exactly as written; in an MSP table the first number after the crop name is the MSP in Rs per quintal. Describe the published conditions and amounts; NEVER decide whether this farmer is eligible and never start an eligibility check or ask for personal or land details: say that the state agriculture office, the bank or the official scheme portal confirms eligibility and enrolment. If the documents do not cover the question, say plainly that you have no verified information on it and send the farmer to the local agriculture officer or KVK. Never invent enrolment dates, forms or phone numbers.",
+               "Answer ONLY from the official documents in CONTEXT (each starts with its title and date in square brackets). Name the document and its date. Quote amounts and dates exactly as written; in an MSP table the first number after the crop name is the MSP in Rs per quintal. If asked which crop has the highest MSP, compare the rows of the MSP table in CONTEXT yourself and name the top crops with their MSP; do not ask which crop. Say that MSP is the government's support price, not the farmer's profit. Describe the published conditions and amounts; NEVER decide whether this farmer is eligible and never start an eligibility check or ask for personal or land details: say that the state agriculture office, the bank or the official scheme portal confirms eligibility and enrolment. If the documents do not cover the question, say plainly that you have no verified information on it and send the farmer to the local agriculture officer or KVK. Never invent enrolment dates, forms or phone numbers.",
                ["scheme", "subsidy", "msp", "support price", "pm kisan", "pm-kisan", "pmkisan", "insurance", "fasal bima", "pmfby", "eligib", "instalment", "installment", "योजना", "सब्सिडी", "समर्थन मूल्य", "एमएसपी", "फसल बीमा", "किसान सम्मान", "पीएम किसान", "हमीभाव", "योजने", "पीक विमा", "अनुदान", "पात्र", "किसान निधी"]),
         Intent("crop_health", "plant disease, pest, yellow or spotted leaves, a photo of a sick crop", "If CONTEXT has no IMAGE ASSESSMENT, you cannot see the plants: say so, ask the farmer to send a clear photo with the camera button or to describe the symptoms, and send them to the local KVK or agriculture officer; never say a data source is unreachable (none is involved) and never name a spray. Otherwise use the IMAGE ASSESSMENT in CONTEXT only. Describe the visible symptoms and possible causes in simple words, say it is a visual guess, and tell the farmer to show the plants to the local KVK or agriculture officer. No pesticide names, doses or rates.", ["disease", "pest", "leaf", "leaves", "yellow", "spot", "insect", "photo", "रोग", "कीट", "पत्ते", "पाने", "पान", "डाग", "धब्बे", "किडी", "फोटो", "bimari", "keeda", "daag", "patta", "patte"]),
         Intent("general", "greeting or anything else", "You can only help with this farm's weather, rain, mandi prices, crop suitability, soil, when to sell, official scheme and support-price documents, and photos of sick crops. For anything else (loans, news, sports, or a scheme the documents in CONTEXT do not cover) say plainly that you have no verified information on it, point to the local agriculture officer or KVK, and invite a question about weather, prices or when to sell. Never start an eligibility check and never ask for personal or land details.", []),
@@ -231,6 +267,9 @@ DOMAIN = Domain(
         "weather_advice": ["weather", "rain_history"],
         "sow_or_crop_care": ["weather", "rain_history", "crop_fit", "soil"],
         "crop_suggest": ["crop_fit", "weather", "soil"],
+        # Answered from the photo or the official documents: a planner-added soil or weather tool only put an unrelated source
+        # under the answer ("Source: ISRIC SoilGrids" for yellow leaf spots, 1 Nov 2026).
+        "crop_health": [], "scheme_info": [],
     },
     label_text=LABEL_TEXT,
     retrieval_query=retrieval_query,
@@ -283,7 +322,6 @@ DOMAIN = Domain(
     # Price answers use the weather only through the cross-check, as one cited heavy-rain note.
     quiet_tools={"sell_or_hold": {"weather", "rain_history"}, "market_price": {"weather", "rain_history"}},
     question_overrides=question_overrides,
-    contradiction_note=contradiction_note,
     vision_prompt=VISION_PROMPT,
     vision_parser=parse_diagnosis,
     tool_help={
@@ -301,6 +339,9 @@ DOMAIN = Domain(
         grounded_units(),  # ...and a Rs / % / mm figure must be that kind of figure in the data
         own_market_claim(),
         no_advice_on_neutral(),
+        no_steady_without_trend(),
+        never_ask_for_prices(),
+        missing_info_is_a_question(),
         forbid_patterns({  # Hindi / Marathi: a future-tense statement about price ("कीमतें अगले हफ्ते स्थिर रहेंगी", "भाव वाढतील")
             r"(?:कीमत|भाव|दाम)\w*[^\u0964.]{0,70}(?:रहेंगी|रहेंगे|बढ़ेंगी|बढ़ेंगे|बढ़ेगा|गिरेंगी|गिरेंगे|गिरेगा|घटेंगी|घटेंगे|बढ़ने की संभावना|गिरने की संभावना)": "Predicts a price move. Say you cannot forecast prices; the trend only describes the past week.",
             r"(?:किंमत|भाव|दर)\w*[^\u0964.]{0,70}(?:राहतील|वाढतील|घटतील|कमी होतील|वाढणार|घटणार|वाढेल|कमी होईल|स्थिर राहील)": "Predicts a price move. Say you cannot forecast prices; the trend only describes the past week.",

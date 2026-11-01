@@ -60,8 +60,6 @@ class Domain:
     knowledge_sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
     label_text: dict[str, dict[str, str]] = field(default_factory=dict)  # language -> {RULE_LABEL: phrase in that language}
     question_overrides: Callable[[dict, dict, str], dict] | None = None
-    # (profile as the form had it, what the question overrode, language) -> a short correction shown above the answer, or ""
-    contradiction_note: Callable[[dict, dict, str], str] | None = None
 
 
 def load_domain() -> Domain:
