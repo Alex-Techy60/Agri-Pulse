@@ -121,3 +121,79 @@ export const signOut = () => fetch("/api/auth/logout", { method: "POST" }).then(
 export const getSettings = () => fetch("/api/settings", { headers: who() }).then(j).then((d) => d.settings);
 export const saveSettings = (settings) =>
   fetch("/api/settings", { method: "PUT", headers: who({ "Content-Type": "application/json" }), body: JSON.stringify(settings) }).then((r) => r.ok).catch(() => false);
+
+// --- PILLAR 1: Sarkari Agri-Scheme Explainer ---
+export const getSchemes = () => fetch("/api/schemes").then(j).then((d) => d.schemes);
+export const explainScheme = (body) =>
+  fetch("/api/schemes/explain", {
+    method: "POST",
+    headers: who({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  }).then(j);
+
+// --- PILLAR 2: Farm Crisis Grievance, Officer Desk & Public Board ---
+export const fileGrievance = (body) =>
+  fetch("/api/grievances", {
+    method: "POST",
+    headers: who({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  }).then(j).then((d) => d.report);
+
+export const listGrievances = (status = "", urgency = "") => {
+  const p = new URLSearchParams();
+  if (status) p.set("status", status);
+  if (urgency) p.set("urgency", urgency);
+  return fetch(`/api/grievances?${p.toString()}`).then(j).then((d) => d.reports);
+};
+
+export const resolveGrievance = (id, body) =>
+  fetch(`/api/grievances/${encodeURIComponent(id)}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(j).then((d) => d.report);
+
+export const sendGrievanceFeedback = (id, confirmed) =>
+  fetch(`/api/grievances/${encodeURIComponent(id)}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmed }),
+  }).then(j).then((d) => d.report);
+
+export const getBoardStats = () => fetch("/api/public/board").then(j);
+
+// --- PILLAR 3: Autonomous Agricultural Filing Agent & Receipts ---
+export async function runAgentFiling(body, onStep) {
+  const res = await fetch("/api/agent/file", {
+    method: "POST",
+    headers: who({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let final = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop();
+    for (const p of parts) {
+      if (!p.startsWith("data: ")) continue;
+      let ev;
+      try { ev = JSON.parse(p.slice(6)); } catch { continue; }
+      if (onStep) onStep(ev);
+      if (ev.type === "final") final = ev;
+    }
+  }
+  return final;
+}
+
+export const verifyReceipt = (receipt) =>
+  fetch("/api/receipts/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(receipt),
+  }).then(j);

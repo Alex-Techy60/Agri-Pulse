@@ -96,6 +96,35 @@ def main() -> int:
     elif failing:
         print("     (the other model still answers, so the demo works; the main model is the better writer)")
 
+    # Pillar checks: schemes, grievance store, receipts
+    try:
+        from app.explainer.engine import list_available_schemes
+        schemes = list_available_schemes()
+        print(f"\nPASS schemes policy library ({len(schemes)} official guidelines verified)")
+    except Exception as e:
+        print(f"\nFAIL schemes policy library: {e}")
+        bad += 1
+
+    try:
+        from app.grievance.store import get_board_stats
+        board = get_board_stats()
+        print(f"PASS farm crisis grievance store ({board['total_reports']} incident tickets active)")
+    except Exception as e:
+        print(f"FAIL farm crisis grievance store: {e}")
+        bad += 1
+
+    try:
+        from app.executor.receipts import sign_receipt, verify_receipt
+        rec = sign_receipt({"test": "live_check"})
+        if verify_receipt(rec):
+            print("PASS cryptographic receipt engine (Ed25519 digital signatures verified)")
+        else:
+            print("FAIL cryptographic receipt engine: signature verification failed")
+            bad += 1
+    except Exception as e:
+        print(f"FAIL cryptographic receipt engine: {e}")
+        bad += 1
+
     print("\nRESULT:", "ALL LIVE SOURCES OK" if bad == 0 else f"{bad} source(s) failing - fix before the demo")
     return 1 if bad else 0
 

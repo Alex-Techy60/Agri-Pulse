@@ -51,3 +51,11 @@ docs/DEMO_SCRIPT.md
 
 # saved chats (per-person history; real user text, never committed)
 backend/data/chats.db*
+
+# Local keys and vaults
+backend/data/crypto/
+backend/data/vault/
+
+# Screenshots
+*.png
+!assets/*.png

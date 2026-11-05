@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { uiText } from "../i18n.js";
 
 // Saved chats of this browser. A column on wide screens, a drawer (Escape or the backdrop closes it) on phones.
 export default function History({ chats, chatId, open, busy, lang, onNew, onOpen, onDelete, onClose }) {
   const t = uiText(lang);
+  const newChatButton = useRef(null);
   useEffect(() => {
     if (!open) return;
+    newChatButton.current?.focus();
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -13,9 +15,9 @@ export default function History({ chats, chatId, open, busy, lang, onNew, onOpen
 
   return (
     <>
-      {open && <div className="backdrop" onClick={onClose} />}
+      {open && <button type="button" className="backdrop" onClick={onClose} aria-label={t.close} />}
       <nav id="history" className={open ? "history open" : "history"} aria-label={t.history}>
-        <button type="button" className="newchat" onClick={onNew} disabled={busy}>＋ {t.newchat}</button>
+        <button ref={newChatButton} type="button" className="newchat" onClick={onNew} disabled={busy}>＋ {t.newchat}</button>
         <h2>{t.history}</h2>
         {chats.length === 0 && <p className="muted">{t.nochats}</p>}
         <ul>

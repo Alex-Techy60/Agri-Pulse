@@ -161,14 +161,58 @@ function RainHistory({ c, lang }) {
 
 function Diagnosis({ c, lang }) {
   const t = uiText(lang);
+  const sevIcons = { mild: "🟢", moderate: "🟡", severe: "🔴" };
+  const sevIcon = sevIcons[c.severity] || "⚪";
   return (
-    <div className="card">
-      <h3>{c.title === "Crop health assessment" ? t.tDiag : c.title}</h3>
-      <span className={`sev ${c.severity}`}>{t.severity}: {c.severity}</span>
-      {c.symptoms?.length > 0 && <><h4>{t.symptoms}</h4><ul>{c.symptoms.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
-      {c.possible_causes?.length > 0 && <><h4>{t.causes}</h4><ul>{c.possible_causes.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
-      {c.recommendations?.length > 0 && <><h4>{t.nextSteps}</h4><ul>{c.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul></>}
-      <small>{c.disclaimer}</small>
+    <div className="card diag-card">
+      <h3>🔍 {c.title === "Crop health assessment" ? t.tDiag : c.title}</h3>
+      <div className="diag-header" style={{ marginBottom: "8px" }}>
+        <span className={`sev ${c.severity}`}>
+          <i>{sevIcon}</i> {t.severity}: {String(c.severity || "").toUpperCase()}
+        </span>
+      </div>
+      {c.symptoms?.length > 0 && (
+        <div className="diag-sec">
+          <h4>📋 {t.symptoms}</h4>
+          <ul>{c.symptoms.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+      {c.possible_causes?.length > 0 && (
+        <div className="diag-sec">
+          <h4>⚠️ {t.causes}</h4>
+          <ul>{c.possible_causes.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+      {c.recommendations?.length > 0 && (
+        <div className="diag-sec">
+          <h4>🌱 {t.nextSteps}</h4>
+          <ul>{c.recommendations.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+      <small className="muted note" style={{ display: "block", marginTop: "8px" }}>🏛️ {c.disclaimer}</small>
+    </div>
+  );
+}
+
+export function AdvisoryReceipt({ digest, lang }) {
+  const t = uiText(lang);
+  const [copied, setCopied] = useState(false);
+  if (!digest) return null;
+  const copy = () => {
+    navigator.clipboard?.writeText(digest).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+  return (
+    <div className="advisory-receipt" role="status" aria-label={t.receiptLabel}>
+      <div className="receipt-left">
+        <span className="receipt-badge"><i>🛡️</i> {t.verifiedLive}</span>
+        <span className="digest-code">{digest}</span>
+      </div>
+      <button type="button" className="receipt-copy" onClick={copy} title={t.copyReceipt}>
+        {copied ? `✓ ${t.copiedReceipt}` : `⧉ ${t.copyReceipt}`}
+      </button>
     </div>
   );
 }

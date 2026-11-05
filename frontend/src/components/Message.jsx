@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Cards, Sources } from "./Cards.jsx";
+import { AdvisoryReceipt, Cards, Sources } from "./Cards.jsx";
+import Logo from "./Logo.jsx";
 import { uiText } from "../i18n.js";
 
 const OFFLINE_MARK = "(AI summary unavailable - showing live data only)";
@@ -19,7 +20,7 @@ export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak
 
   return (
     <div className={`row ${m.role}${grouped ? " cont" : ""}`}>
-      {bot && <span className="avatar" aria-hidden="true">{grouped ? "" : "🌾"}</span>}
+      {bot && <span className="avatar" aria-hidden="true">{grouped ? "" : <Logo size={22} />}</span>}
       <div className="bubble-wrap">
         <article className={`msg ${m.role}`} aria-label={bot ? "KisaanMitra" : t.you}>
           {folded ? (
@@ -35,6 +36,7 @@ export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak
             </>
           )}
           <Sources list={m.meta?.live_sources} lang={lang} />
+          {m.meta?.integrity_digest && <AdvisoryReceipt digest={m.meta.integrity_digest} lang={lang} />}
           {!folded && m.meta?.sources?.length > 0 && <small>{t.docs}: {m.meta.sources.join(", ")}</small>}
           {m.meta?.degraded && <small className="warn note">⚠ {t.degraded}</small>}
         </article>

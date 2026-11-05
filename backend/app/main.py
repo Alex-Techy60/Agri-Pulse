@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import router
 from app.core.config import get_settings, llm_keys
 from app.memory.store import KNOWLEDGE, get_store
+from app.sandbox_portal.app import sandbox_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 for _noisy in ("httpx", "httpcore"):  # httpx logs full request URLs at INFO, and the data.gov.in key travels in the URL
@@ -41,6 +42,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.mount("/sandbox", sandbox_app)
+
+@app.get("/sandbox", include_in_schema=False)
+def sandbox_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/sandbox/")
 
 def mount_spa(application: FastAPI, dist: Path) -> None:
     """One-container deploy: serve the built SPA from the API (`npm run build` first).
@@ -55,7 +62,7 @@ def mount_spa(application: FastAPI, dist: Path) -> None:
         f = (dist / path).resolve()
         if path and f.is_file() and dist.resolve() in f.parents:  # block ../ traversal
             return FileResponse(f)
-        if path.startswith("api/") or path == "api" or Path(path).suffix:
+        if path.startswith("api/") or path == "api" or path.startswith("sandbox/") or path == "sandbox" or Path(path).suffix:
             raise HTTPException(404, "Not found.")
         return FileResponse(dist / "index.html")
 

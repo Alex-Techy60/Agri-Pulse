@@ -9,6 +9,6 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_URL || "http://localhost:8000";
   return {
     plugins: [react()],
-    server: { host: true, port: 5173, proxy: { "/api": apiTarget } },
+    server: { host: true, port: 5173, proxy: { "/api": apiTarget, "/sandbox": apiTarget } },
   };
 });

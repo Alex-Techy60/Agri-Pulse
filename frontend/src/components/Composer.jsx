@@ -5,7 +5,7 @@ const MAX_CHARS = 4000; // the API's limit on one message
 const MAX_ROWS_PX = 140;
 
 // Enter sends, Shift+Enter adds a line. Never send while an input-method editor (Hindi/Marathi keyboards) is mid-word.
-export default function Composer({ value, onChange, onSend, busy, photo, onPhoto, onClearPhoto, rec, transcribing, onMic, lang, onStop }) {
+export default function Composer({ value, onChange, onSend, busy, photo, onPhoto, onClearPhoto, rec, recSeconds, onCancelRec, transcribing, onMic, lang, onStop }) {
   const t = uiText(lang);
   const box = useRef(null);
 
@@ -27,6 +27,13 @@ export default function Composer({ value, onChange, onSend, busy, photo, onPhoto
   const can = !busy && (value.trim() || photo);
   return (
     <form className="composer" onSubmit={(e) => { e.preventDefault(); if (can) onSend(); box.current?.focus(); }}>
+      {rec && (
+        <div className="rec-bar" role="status" aria-live="polite">
+          <i className="rec-dot" aria-hidden="true" />
+          <span>{t.recDuration(recSeconds || 0)}</span>
+          <button type="button" className="rec-cancel" onClick={onCancelRec}>✕ {t.cancelRec}</button>
+        </div>
+      )}
       {photo && (
         <div className="chip" role="status">
           {photo.previewUrl ? <img src={photo.previewUrl} alt="" /> : "📷"} <span>{t.photoReady(photo.name)}</span>

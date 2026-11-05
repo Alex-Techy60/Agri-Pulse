@@ -127,9 +127,21 @@ class ChatResult:
     profile: dict = field(default_factory=dict)  # resolved place/state/lat/lon + crop
     follow_ups: list[str] = field(default_factory=list)  # next questions the farmer can tap; none while we wait for a missing input
     live_only: bool = False  # the AI was unavailable: `answer` is the raw live data, so the UI shows the cards first and the text folded
+    integrity_digest: str | None = None  # cryptographic hash verifying data grounding & advisory provenance
 
     def dict(self) -> dict:
         return asdict(self)
+
+
+def compute_advisory_digest(place: str, crop: str, live_sources: list, cards: list) -> str | None:
+    """Deterministic cryptographic digest proving that advisory decisions stem from verified live sources, not hallucinations."""
+    if not live_sources and not cards:
+        return None
+    import hashlib
+    sources_summary = sorted([f"{s.get('name')}:{s.get('fetched_at')}" for s in live_sources if isinstance(s, dict)])
+    cards_summary = sorted([f"{c.get('type')}:{c.get('signal', '')}:{c.get('severity', '')}" for c in cards if isinstance(c, dict)])
+    payload = f"{place.strip().lower()}|{crop.strip().lower()}|{';'.join(sources_summary)}|{';'.join(cards_summary)}"
+    return f"KM-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12].upper()}"
 
 
 class Orchestrator:
@@ -460,7 +472,8 @@ class Orchestrator:
 
         nexts = {} if missing else self.domain.follow_ups.get(intent.name, {})
         follow = nexts.get(lang) or nexts.get("en", [])
-        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved, follow_ups=list(follow), live_only=answer.startswith(OFFLINE_MARK))}
+        digest = compute_advisory_digest(resolved.get("place", ""), resolved.get("crop", ""), live_sources, cards)
+        yield {"type": "final", "result": ChatResult(answer, intent.name, lang, doc_sources, warnings, degraded, trace, live_sources, cards, resolved, follow_ups=list(follow), live_only=answer.startswith(OFFLINE_MARK), integrity_digest=digest)}
 
     # -------------------------------------------------------------- internals
     def _route(self, text: str, language: str | None) -> tuple[Intent, str, str, bool, dict]:

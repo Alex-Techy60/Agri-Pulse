@@ -6,6 +6,15 @@ import History from "./components/History.jsx";
 import Profile from "./components/Profile.jsx";
 import SignIn from "./components/SignIn.jsx";
 import AnimatedBadge from "./components/AnimatedBadge.jsx";
+import Logo from "./components/Logo.jsx";
+import LandingPage from "./components/LandingPage.jsx";
+import FarmerDashboard from "./components/FarmerDashboard.jsx";
+import SchemesExplainer from "./components/SchemesExplainer.jsx";
+import SchemesEngineRoom from "./components/SchemesEngineRoom.jsx";
+import AccountabilityBoard from "./components/AccountabilityBoard.jsx";
+import GrievanceForm from "./components/GrievanceForm.jsx";
+import OfficerDesk from "./components/OfficerDesk.jsx";
+import AgentFilingRoom from "./components/AgentFilingRoom.jsx";
 import { prepareImage } from "./image.js";
 import { say, stopSpeech, useVoices } from "./speech.js";
 import { uiText } from "./i18n.js";
@@ -20,6 +29,8 @@ const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringif
 const cleanLang = (v) => { const l = String(v ?? "").replace(/^["']+|["']+$/g, "").trim(); return /^[a-z]{2,3}$/.test(l) ? l : "en"; };
 const loadLang = () => { try { return cleanLang(localStorage.getItem("lang")); } catch { return "en"; } };
 const saveLang = (l) => { try { localStorage.setItem("lang", l); } catch { /* private mode */ } };
+const loadScale = () => { try { return Number(localStorage.getItem("km-scale")) || 1; } catch { return 1; } };
+const saveScale = (s) => { try { localStorage.setItem("km-scale", String(s)); } catch { /* private mode */ } };
 const stamp = () => new Date().toISOString();
 // Voice: Chrome/Firefox record webm, Safari/iPhone records mp4, so the recorder picks what the browser supports and the file name follows the real type.
 const MAX_RECORD_MS = 60_000; // a forgotten mic must not grow past the server's 5 MB limit
@@ -70,8 +81,13 @@ export default function App() {
   const [photo, setPhoto] = useState(null); // {b64, previewUrl, name}: already shrunk to 1024 px
   const [slow, setSlow] = useState(false);
   const [aiDown, setAiDown] = useState(false); // "key configured" is not "AI answering": the badge follows the last real answer
+  const [tab, setTab] = useState("advisory"); // "advisory" | "schemes" | "schemes_engine" | "board" | "report" | "officer" | "filing"
   const [notice, setNotice] = useState("");
   const [rate, setRate] = useState(loadRate);
+  const [scale, setScale] = useState(loadScale);
+  const [recSeconds, setRecSeconds] = useState(0);
+  const recInterval = useRef(null);
+  const cancelledRef = useRef(false);
   const voices = useVoices();
   const [chatId, setChatId] = useState(loadChatId);
   const [chats, setChats] = useState([]);
@@ -84,6 +100,11 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const busyRef = useRef(false);
   const prefsReady = useRef(false); // never write settings to the server before the saved ones were read, or a fresh device would erase them
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${scale * 100}%`;
+    saveScale(scale);
+  }, [scale]);
 
   // Settings: the server copy (per account or per browser) wins over this device's localStorage. Re-read after sign-in, since the owner changed.
   const pullPrefs = () => getSettings().then((p) => {
@@ -252,6 +273,16 @@ export default function App() {
     send(text);
   }
 
+  function cancelRecording() {
+    if (!rec) return;
+    cancelledRef.current = true;
+    clearInterval(recInterval.current);
+    recInterval.current = null;
+    recorder.current?.stop();
+    setRec(false);
+    setRecSeconds(0);
+  }
+
   async function toggleMic() {
     if (transcribing) return;
     if (rec) return recorder.current?.stop();
@@ -271,13 +302,21 @@ export default function App() {
     }
     const chunks = [];
     const meter = startMeter(stream);
+    cancelledRef.current = false;
+    setRecSeconds(0);
+    clearInterval(recInterval.current);
+    recInterval.current = setInterval(() => setRecSeconds((s) => s + 1), 1000);
     const stopTimer = setTimeout(() => mr.state === "recording" && mr.stop(), MAX_RECORD_MS);
     mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     mr.onstop = async () => {
       clearTimeout(stopTimer);
+      clearInterval(recInterval.current);
+      recInterval.current = null;
       meter?.stop();
       stream.getTracks().forEach((t) => t.stop());
       setRec(false);
+      setRecSeconds(0);
+      if (cancelledRef.current) return; // user pressed cancel: discard audio
       const realType = mr.mimeType || type || "audio/webm";
       const blob = new Blob(chunks, { type: realType });
       if (blob.size < MIN_AUDIO_BYTES || (meter && meter.frames < MIN_SPEECH_FRAMES)) return botSay(uiText(lang).deaf); // nothing was said: do not upload silence
@@ -298,19 +337,29 @@ export default function App() {
   if (!domain) return null;
   return (
     <div className="app" onDragOver={(e) => { if (hasFiles(e)) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={dropPhoto}>
+      <div className="agri-bar" aria-hidden="true" />
+      <a className="skip-link" href="#main">{uiText(lang).skip}</a>
       {dragging && (
         <div className="dropzone" role="status">
           <div><span aria-hidden="true">📷</span><h3>{uiText(lang).dropTitle}</h3><p>{uiText(lang).dropHint}</p></div>
         </div>
       )}
       <header>
-        <div>
-          <h1>{domain.title}</h1>
-          <p>{uiText(lang).tagline || domain.tagline}</p>
+        <div className="brand-title" onClick={() => setTab("landing")} style={{ cursor: "pointer" }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setTab("landing"); }}>
+          <Logo size={36} />
+          <div>
+            <h1>{domain.title}</h1>
+            <p>{uiText(lang).tagline || domain.tagline}</p>
+          </div>
         </div>
         <div className="controls">
           <button type="button" className="mic hbtn" onClick={() => setDrawer(true)} aria-label={uiText(lang).history} aria-expanded={drawer} aria-controls="history">☰ {uiText(lang).history}</button>
-          <select value={lang} onChange={(e) => { setLang(e.target.value); saveLang(e.target.value); }} aria-label="Language">
+          <div className="scale-group" role="group" aria-label="Text size">
+            <button type="button" className={`scale-btn ${scale === 0.875 ? "active" : ""}`} onClick={() => setScale(0.875)} aria-label={uiText(lang).scaleA_minus} title={uiText(lang).scaleA_minus}>A−</button>
+            <button type="button" className={`scale-btn ${scale === 1 ? "active" : ""}`} onClick={() => setScale(1)} aria-label={uiText(lang).scaleA_normal} title={uiText(lang).scaleA_normal}>A</button>
+            <button type="button" className={`scale-btn ${scale === 1.125 ? "active" : ""}`} onClick={() => setScale(1.125)} aria-label={uiText(lang).scaleA_plus} title={uiText(lang).scaleA_plus}>A+</button>
+          </div>
+          <select value={lang} onChange={(e) => { setLang(e.target.value); saveLang(e.target.value); }} aria-label={uiText(lang).language}>
             {Object.entries(domain.languages).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
@@ -326,18 +375,69 @@ export default function App() {
         </div>
       </header>
 
-      <Profile fields={domain.profile_fields || []} profile={profile} onChange={setField} lang={lang} onLocate={useLocation} locating={locating} />
+      <nav className="feature-nav" role="tablist" aria-label="Sections">
+        <button type="button" role="tab" aria-selected={tab === "advisory"} className={`fnav-btn ${tab === "advisory" ? "active" : ""}`} onClick={() => setTab("advisory")}>{uiText(lang).tabAdvisory || "🌾 Farm Advisory"}</button>
+        <button type="button" role="tab" aria-selected={tab === "schemes" || tab === "schemes_engine"} className={`fnav-btn ${tab === "schemes" || tab === "schemes_engine" ? "active" : ""}`} onClick={() => setTab("schemes")}>{uiText(lang).tabSchemes || "📜 Schemes Explainer"}</button>
+        <button type="button" role="tab" aria-selected={tab === "board" || tab === "report"} className={`fnav-btn ${tab === "board" || tab === "report" ? "active" : ""}`} onClick={() => setTab("board")}>{uiText(lang).tabBoard || "📍 Crisis Board"}</button>
+        <button type="button" role="tab" aria-selected={tab === "officer"} className={`fnav-btn ${tab === "officer" ? "active" : ""}`} onClick={() => setTab("officer")}>{uiText(lang).tabOfficer || "🏛️ Krishi Desk"}</button>
+        <button type="button" role="tab" aria-selected={tab === "filing"} className={`fnav-btn ${tab === "filing" ? "active" : ""}`} onClick={() => setTab("filing")}>{uiText(lang).tabFiling || "🤖 Filing Room"}</button>
+      </nav>
 
-      <main>
-        <History chats={chats} chatId={chatId} open={drawer} busy={busy} lang={lang} onNew={newChat} onOpen={openChat} onDelete={removeChat} onClose={() => setDrawer(false)} />
-        <MessageList
-          msgs={msgs} chatId={chatId} busy={busy} step={trace[trace.length - 1]} lang={lang}
-          prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
-          onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
-        />
-      </main>
+      {tab === "advisory" && (
+        <>
+          <Profile fields={domain.profile_fields || []} profile={profile} onChange={setField} lang={lang} onLocate={useLocation} locating={locating} />
+          <main id="main" tabIndex="-1">
+            <History chats={chats} chatId={chatId} open={drawer} busy={busy} lang={lang} onNew={newChat} onOpen={openChat} onDelete={removeChat} onClose={() => setDrawer(false)} />
+            <MessageList
+              msgs={msgs} chatId={chatId} busy={busy} step={trace[trace.length - 1]} lang={lang}
+              prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
+              onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
+            />
+          </main>
+          <Composer value={input} onChange={setInput} onSend={() => send()} busy={busy} photo={photo} onPhoto={pickPhoto} onClearPhoto={() => { URL.revokeObjectURL(photo?.previewUrl); setPhoto(null); }} rec={rec} recSeconds={recSeconds} onCancelRec={cancelRecording} transcribing={transcribing} onMic={toggleMic} lang={lang} onStop={stop} />
+        </>
+      )}
 
-      <Composer value={input} onChange={setInput} onSend={() => send()} busy={busy} photo={photo} onPhoto={pickPhoto} onClearPhoto={() => { URL.revokeObjectURL(photo?.previewUrl); setPhoto(null); }} rec={rec} transcribing={transcribing} onMic={toggleMic} lang={lang} onStop={stop} />
+      {tab === "schemes" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <SchemesExplainer lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+        </main>
+      )}
+
+      {tab === "schemes_engine" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <SchemesEngineRoom lang={lang} onNavigate={setTab} />
+        </main>
+      )}
+
+      {tab === "board" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <AccountabilityBoard lang={lang} onReportNew={() => setTab("report")} onOpenOfficerDesk={() => setTab("officer")} />
+        </main>
+      )}
+
+      {tab === "report" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <GrievanceForm lang={lang} profile={profile} onGoToBoard={() => setTab("board")} />
+        </main>
+      )}
+
+      {tab === "officer" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <OfficerDesk lang={lang} onGoToBoard={() => setTab("board")} />
+        </main>
+      )}
+
+      {tab === "filing" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <AgentFilingRoom lang={lang} />
+        </main>
+      )}
+
+      <footer className="app-footer">
+        <span>{uiText(lang).footerPromise}</span>
+        <span>{uiText(lang).footerNote}</span>
+      </footer>
     </div>
   );
 }
