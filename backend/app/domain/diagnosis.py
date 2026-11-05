@@ -10,11 +10,16 @@ import re
 from app.llm.client import parse_json
 
 VISION_PROMPT = (
-    "You are looking at a farm / crop photo. Reply with JSON only, no other text:\n"
-    '{"crop": "<crop or plant visible, or unknown>", "symptoms": ["<specific visible symptom>", ...], '
-    '"severity": "mild | moderate | severe | none", "possible_causes": ["<factual possible cause>", ...]}\n'
-    "Rules: describe only what is visible (colour changes, spots, wilting, holes, pests). At most 5 items per list. "
-    "Use words, not numbers or percentages. Do NOT recommend pesticides, brands, doses or treatments. "
+    "You are an expert plant pathologist analyzing a crop leaf or plant photograph. "
+    "Identify the crop, observe all visible symptoms (lesions, chlorosis, discoloration, wilting, pest damage), "
+    "and determine the most probable cause.\n"
+    "OUTPUT FORMAT: Strict JSON matching this schema:\n"
+    '{"crop": "<crop_name>", "symptoms": ["<symptom_1>", "<symptom_2>"], '
+    '"severity": "mild | moderate | severe", "possible_causes": ["<fungal/bacterial/pest_name>"], '
+    '"recommendations": ["<cultural_or_organic_step_1>", "<step_2>"], '
+    '"disclaimer": "Field diagnosis requires physical inspection. Consult your Taluka Krishi Adhikari or KVK."}\n'
+    "Rules: describe only what is visible. At most 5 items per list. "
+    "Use words, not numbers or percentages. Do NOT recommend proprietary brand chemical formulations or off-label doses. "
     "If the photo is not a plant or crop, set crop to unknown and symptoms to []."
 )
 

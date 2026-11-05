@@ -38,11 +38,12 @@ class Planner:
             )
         except Exception:
             data = None
-        picked = data.get("tools") if isinstance(data, dict) else None
+        picked = data if isinstance(data, list) else (data.get("tools") if isinstance(data, dict) else None)
         if not isinstance(picked, list):
             return base, "planner unavailable; using default tools for the intent", True
         extra = [n for n in picked if isinstance(n, str) and n in allowed and n not in base]
-        return base + list(dict.fromkeys(extra)), str(data.get("reason", ""))[:120], False
+        reason = str(data.get("reason", "") if isinstance(data, dict) else "")[:120]
+        return base + list(dict.fromkeys(extra)), reason, False
 
 
 RETRY_DELAY_S = 0.5

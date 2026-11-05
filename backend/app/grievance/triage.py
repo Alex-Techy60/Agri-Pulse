@@ -52,6 +52,15 @@ CATEGORY_ROUTING: dict[CrisisCategory, dict] = {
     }
 }
 
+TRIAGE_PROMPT = (
+    "Classify incoming farmer crisis reports into priority tiers:\n"
+    "- P1 (Emergency / 24-72h SLA): Hailstorm damage, flash flood crop loss, canal tail blockage, spurious fertilizer.\n"
+    "- P2 (Urgent / 48h SLA): Distribution transformer burnout, agricultural pump grid failure, wild animal raids.\n"
+    "- P3 (Standard / 72h SLA): General scheme delay, local advisory queries.\n\n"
+    'Output JSON: {"urgency": "P1"|"P2"|"P3", "department": "<dept_name>", "sla_hours": <int>}'
+)
+
+
 def mask_phone(phone: str) -> str:
     digits = re.sub(r"\D", "", phone or "")
     if len(digits) >= 4:
@@ -79,11 +88,11 @@ def translate_to_english_for_officers(text: str, source_lang: str) -> str:
         return f"[{source_lang.upper()} Report] {text}"
 
 def triage_crisis(inp: FarmCrisisIn, report_id: str) -> FarmCrisisReport:
-    routing = CATEGORY_ROUTING.get(inp.category, {
+    routing = dict(CATEGORY_ROUTING.get(inp.category, {
         "urgency": "P2",
         "sla_hours": 72,
         "department": "District Agriculture Officer (Krishi Vibhag)"
-    })
+    }))
     
     # Auto-escalate if description mentions critical emergency keywords
     urgency: UrgencyLevel = routing["urgency"]

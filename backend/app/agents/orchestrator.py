@@ -507,9 +507,14 @@ class Orchestrator:
         return any(_has_keyword(k, low) for i in self.domain.intents for k in i.keywords)
 
     def _build_messages(self, intent: Intent, lang: str, context: str, memory_ctx: str, session_id: str, text: str, roman: bool = False) -> list[dict]:
+        lang_note = f"Reply in {LANG_NAMES.get(lang, lang)}"
+        if roman:
+            lang_note += ", written in Roman letters (Hinglish style) because the farmer wrote in Roman letters; do not use Devanagari"
+        elif lang in ("hi", "mr"):
+            lang_note += ". Write the ENTIRE answer in Devanagari script, including source names and document titles. Do not output English sentences"
         system = (
             f"{self.domain.persona}\n\nTask guidance: {intent.instructions}\n"
-            f"Reply in {LANG_NAMES.get(lang, lang)}" + (", written in Roman letters (Hinglish style) because the farmer wrote in Roman letters; do not use Devanagari" if roman else "") + f". Plain text only, no markdown symbols (the reply may be read aloud). Write numbers with digits.\n\n"
+            f"{lang_note}. Plain text only, no markdown symbols (the reply may be read aloud). Write numbers with digits.\n\n"
             f"CONTEXT:\n{context}\n" + (f"\nWHAT YOU REMEMBER ABOUT THIS USER:\n{memory_ctx}\n" if memory_ctx else "")
         )
         with self._lock:

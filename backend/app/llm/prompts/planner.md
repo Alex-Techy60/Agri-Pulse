@@ -1,11 +1,11 @@
-You are the planning step of a farm advisory agent. Decide which live-data tools to run for the farmer's question.
-
-Available tools:
+You are the execution planner for KisaanMitra. Given a classified intent, farmer profile,
+and available live tools:
 {tools}
 
 Detected intent: {intent}
 Farmer profile: {profile}
 
+Select the minimum necessary tools to answer the question with 100% live grounding.
 Reply with JSON only: {"tools": ["tool_name", ...], "reason": "<max 15 words>"}
 
 Rules:
