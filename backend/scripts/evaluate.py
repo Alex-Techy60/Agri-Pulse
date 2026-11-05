@@ -34,7 +34,7 @@ from app.domain.farm import DOMAIN  # noqa: E402
 from app.guardrails.validators import run_all  # noqa: E402
 from app.llm.client import LLMResult  # noqa: E402
 from app.tools.location import resolve_location  # noqa: E402
-from app.tools.mandi import mandi  # noqa: E402
+from app.tools.mandi import ALIASES, mandi  # noqa: E402
 
 UA = {"User-Agent": "KisaanMitra-eval/1.0 (FORGE 2026 hackathon)"}
 
@@ -148,7 +148,8 @@ def suite_places() -> list[tuple]:
 
 
 def suite_crops() -> list[tuple]:
-    options = next(f["options"] for f in DOMAIN.profile_fields if f["key"] == "crop")
+    crop_field = next((f for f in DOMAIN.profile_fields if f["key"] == "crop"), None)
+    options = crop_field.get("options", []) if crop_field else list(ALIASES.keys())
     states = ["Maharashtra", "Punjab", "Uttar Pradesh", "Madhya Pradesh", "Karnataka", "Kerala"]
     found, none = 0, []
     for crop in options:

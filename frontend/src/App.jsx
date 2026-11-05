@@ -345,7 +345,7 @@ export default function App() {
         </div>
       )}
       <header>
-        <div className="brand-title" onClick={() => setTab("landing")} style={{ cursor: "pointer" }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setTab("landing"); }}>
+        <div className="brand-title" onClick={() => setTab("advisory")} style={{ cursor: "pointer" }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setTab("advisory"); }}>
           <Logo size={36} />
           <div>
             <h1>{domain.title}</h1>
@@ -377,11 +377,25 @@ export default function App() {
 
       <nav className="feature-nav" role="tablist" aria-label="Sections">
         <button type="button" role="tab" aria-selected={tab === "advisory"} className={`fnav-btn ${tab === "advisory" ? "active" : ""}`} onClick={() => setTab("advisory")}>{uiText(lang).tabAdvisory || "🌾 Farm Advisory"}</button>
+        <button type="button" role="tab" aria-selected={tab === "dashboard"} className={`fnav-btn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>{uiText(lang).tabDashboard || "📊 Farmer Home"}</button>
         <button type="button" role="tab" aria-selected={tab === "schemes" || tab === "schemes_engine"} className={`fnav-btn ${tab === "schemes" || tab === "schemes_engine" ? "active" : ""}`} onClick={() => setTab("schemes")}>{uiText(lang).tabSchemes || "📜 Schemes Explainer"}</button>
         <button type="button" role="tab" aria-selected={tab === "board" || tab === "report"} className={`fnav-btn ${tab === "board" || tab === "report" ? "active" : ""}`} onClick={() => setTab("board")}>{uiText(lang).tabBoard || "📍 Crisis Board"}</button>
         <button type="button" role="tab" aria-selected={tab === "officer"} className={`fnav-btn ${tab === "officer" ? "active" : ""}`} onClick={() => setTab("officer")}>{uiText(lang).tabOfficer || "🏛️ Krishi Desk"}</button>
         <button type="button" role="tab" aria-selected={tab === "filing"} className={`fnav-btn ${tab === "filing" ? "active" : ""}`} onClick={() => setTab("filing")}>{uiText(lang).tabFiling || "🤖 Filing Room"}</button>
+        <button type="button" role="tab" aria-selected={tab === "landing"} className={`fnav-btn ${tab === "landing" ? "active" : ""}`} onClick={() => setTab("landing")}>{uiText(lang).tabLanding || "🌱 Overview"}</button>
       </nav>
+
+      {tab === "landing" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <LandingPage lang={lang} onNavigate={setTab} />
+        </main>
+      )}
+
+      {tab === "dashboard" && (
+        <main id="main" className="full-tab-view" tabIndex="-1">
+          <FarmerDashboard lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+        </main>
+      )}
 
       {tab === "advisory" && (
         <>
