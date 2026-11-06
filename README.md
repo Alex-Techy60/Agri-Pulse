@@ -1,3 +1,13 @@
+---
+title: KisaanMitra
+emoji: 🌾
+colorFrom: green
+colorTo: yellow
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # KisaanMitra — live-data farm decision agent (FORGE '26 · Theme 2, problem 1)
 
 > **Before submission, fill in by hand:** live URL · demo video link · team names (marked `TODO` below).
