@@ -15,6 +15,7 @@ import AccountabilityBoard from "./components/AccountabilityBoard.jsx";
 import GrievanceForm from "./components/GrievanceForm.jsx";
 import OfficerDesk from "./components/OfficerDesk.jsx";
 import AgentFilingRoom from "./components/AgentFilingRoom.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import { prepareImage } from "./image.js";
 import { say, stopSpeech, useVoices } from "./speech.js";
 import { uiText } from "./i18n.js";
@@ -22,7 +23,8 @@ import { uiText } from "./i18n.js";
 // The open chat survives a page reload; its messages come back from the server.
 const loadChatId = () => { try { return localStorage.getItem("chatId") || newChatId(); } catch { return newChatId(); } };
 const saveChatId = (id) => { try { localStorage.setItem("chatId", id); } catch { /* private mode */ } };
-const loadProfile = () => { try { const { place } = JSON.parse(localStorage.getItem("profile") || "{}"); return place ? { place } : {}; } catch { return {}; } }; // only the place is remembered: the crop comes from each question
+// Place and crop are remembered on this device. A question can still name another crop; the backend lets it override this default.
+const loadProfile = () => { try { const { place, crop } = JSON.parse(localStorage.getItem("profile") || "{}"); return { ...(place ? { place } : {}), ...(crop ? { crop } : {}) }; } catch { return {}; } };
 const saveProfile = (p) => { try { localStorage.setItem("profile", JSON.stringify(p)); } catch { /* private mode */ } };
 // localStorage is shared by every app on this origin and can hold anything (we have seen the value "\"en\"" with quote marks).
 // A bad tag makes toLocaleString throw and blanks the whole page, so only a plain language code is accepted.
@@ -185,7 +187,7 @@ export default function App() {
     setMsgs((m) => [...m, { role: "user", text: image ? `📷 ${image.name}\n${text}` : text, at: stamp() }]);
     try {
       const imageB64 = image?.b64;
-      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
+      const r = await chatStream({ message: text, sessionId: chatId, language: lang, imageB64, profile: { place: profile.place, ...(profile.crop ? { crop: profile.crop } : {}) }, signal: ctl.signal }, (s) => setTrace((t) => [...t, s]));
       setMsgs((m) => [...m, { role: "bot", text: r.answer, meta: r, at: stamp(), id: r.message_id || undefined, feedback: null }]);
       setAiDown(!!r.live_only);
       refreshChats();
@@ -387,13 +389,17 @@ export default function App() {
 
       {tab === "landing" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <LandingPage lang={lang} onNavigate={setTab} />
+          <ErrorBoundary>
+            <LandingPage lang={lang} onNavigate={setTab} health={health} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "dashboard" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <FarmerDashboard lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+          <ErrorBoundary>
+            <FarmerDashboard lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+          </ErrorBoundary>
         </main>
       )}
 
@@ -401,12 +407,14 @@ export default function App() {
         <>
           <Profile fields={domain.profile_fields || []} profile={profile} onChange={setField} lang={lang} onLocate={useLocation} locating={locating} />
           <main id="main" tabIndex="-1">
-            <History chats={chats} chatId={chatId} open={drawer} busy={busy} lang={lang} onNew={newChat} onOpen={openChat} onDelete={removeChat} onClose={() => setDrawer(false)} />
-            <MessageList
-              msgs={msgs} chatId={chatId} busy={busy} step={trace[trace.length - 1]} lang={lang}
-              prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
-              onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
-            />
+            <ErrorBoundary>
+              <History chats={chats} chatId={chatId} open={drawer} busy={busy} lang={lang} onNew={newChat} onOpen={openChat} onDelete={removeChat} onClose={() => setDrawer(false)} />
+              <MessageList
+                msgs={msgs} chatId={chatId} busy={busy} step={trace[trace.length - 1]} lang={lang}
+                prompts={domain.suggested_prompts_by_lang?.[lang] || domain.suggested_prompts}
+                onAsk={send} onRetry={retry} slow={slow} voices={voices} rate={rate} languages={domain.languages} notice={notice} onNotice={setNotice} health={health} onVote={vote}
+              />
+            </ErrorBoundary>
           </main>
           <Composer value={input} onChange={setInput} onSend={() => send()} busy={busy} photo={photo} onPhoto={pickPhoto} onClearPhoto={() => { URL.revokeObjectURL(photo?.previewUrl); setPhoto(null); }} rec={rec} recSeconds={recSeconds} onCancelRec={cancelRecording} transcribing={transcribing} onMic={toggleMic} lang={lang} onStop={stop} />
         </>
@@ -414,37 +422,49 @@ export default function App() {
 
       {tab === "schemes" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <SchemesExplainer lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+          <ErrorBoundary>
+            <SchemesExplainer lang={lang} profile={profile} onAsk={(q) => { setTab("advisory"); send(q); }} onNavigate={setTab} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "schemes_engine" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <SchemesEngineRoom lang={lang} onNavigate={setTab} />
+          <ErrorBoundary>
+            <SchemesEngineRoom lang={lang} onNavigate={setTab} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "board" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <AccountabilityBoard lang={lang} onReportNew={() => setTab("report")} onOpenOfficerDesk={() => setTab("officer")} />
+          <ErrorBoundary>
+            <AccountabilityBoard lang={lang} onReportNew={() => setTab("report")} onOpenOfficerDesk={() => setTab("officer")} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "report" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <GrievanceForm lang={lang} profile={profile} onGoToBoard={() => setTab("board")} />
+          <ErrorBoundary>
+            <GrievanceForm lang={lang} profile={profile} onGoToBoard={() => setTab("board")} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "officer" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <OfficerDesk lang={lang} onGoToBoard={() => setTab("board")} />
+          <ErrorBoundary>
+            <OfficerDesk lang={lang} onGoToBoard={() => setTab("board")} />
+          </ErrorBoundary>
         </main>
       )}
 
       {tab === "filing" && (
         <main id="main" className="full-tab-view" tabIndex="-1">
-          <AgentFilingRoom lang={lang} />
+          <ErrorBoundary>
+            <AgentFilingRoom lang={lang} />
+          </ErrorBoundary>
         </main>
       )}
 

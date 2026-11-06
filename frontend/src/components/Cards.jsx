@@ -60,7 +60,23 @@ function Forecast({ c, lang }) {
           </div>
         ))}
       </div>
+      <SprayWindow c={c} t={t} />
       <AlertList lang={lang} alerts={(c.flags || []).map((f) => ({ key: f?.flag, day: f?.day }))} />
+    </div>
+  );
+}
+
+// The 48-hour spray and irrigation verdicts come from weather_rules.py; the UI only reports them.
+function SprayWindow({ c, t }) {
+  const days = c.days.slice(0, 2).map((d) => d.date);
+  const sprayOk = (c.spray_ok_days || []).some((d) => days.includes(d));
+  const irrigate = c.irrigation === "SKIP_IRRIGATION" ? t.irrSkip : t.irrIf;
+  return (
+    <div className="spray-window" aria-live="polite">
+      <span className={`pill ${sprayOk ? "ok" : "warn"}`}>{sprayOk ? t.spraySafe : t.sprayAvoid}</span>
+      <small className="muted">
+        {c.rain_next_48h_mm == null ? "" : `${t.sprayRain(c.rain_next_48h_mm)} · `}{irrigate}
+      </small>
     </div>
   );
 }
@@ -122,15 +138,50 @@ function Prices({ c, lang }) {
       {!sig && s.signal === "INSUFFICIENT_DATA" && <p className="notrend">{t.noTrend}</p>}
       {pts.length > 1 && <Chart pts={pts} t={t} />}
       <small>{pts.length ? `₹${pts[pts.length - 1].modal} ${t.perq} · ${pts[pts.length - 1].date}` : ""}</small>
-      {c.markets?.length > 0 && (
-        <table><tbody>{c.markets.map((m, i) => <tr key={i}><td>{m.market}</td><td>{m.district}</td><td>₹{m.modal}</td></tr>)}</tbody></table>
-      )}
+      {c.markets?.length > 0 && <MarketTable markets={c.markets} date={c.latest_date} t={t} />}
       {c.position && (
         <small className="position">
           {t.stateMed} ₹{c.position.state_median} · {c.position.markets} {t.nMarkets} · {t.best} ₹{c.position.best_price} - {c.position.best_market}
           {c.position.local_median != null ? ` · ${t.yourDist} ₹${c.position.local_median} (${c.position.pct_vs_state_median}% ${t.vsState})` : ""}
         </small>
       )}
+    </div>
+  );
+}
+
+// Prices of the same day for every market in the card. A day more than 48 hours old is marked, never hidden.
+function isOlderThan48h(date) {
+  const ms = Date.parse(`${date}T00:00:00`);
+  return Number.isFinite(ms) && Date.now() - ms > 48 * 3600 * 1000;
+}
+
+function MarketTable({ markets, date, t }) {
+  const stale = isOlderThan48h(date);
+  return (
+    <div className="mkt-wrap">
+      <table className="mkt">
+        <thead>
+          <tr>
+            <th scope="col">{t.cMarket}</th>
+            <th scope="col">{t.cDistrict}</th>
+            <th scope="col" className="num">₹/q</th>
+            <th scope="col">{t.cDate}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {markets.map((m, i) => (
+            <tr key={i}>
+              <td data-label={t.cMarket}>{m.market}</td>
+              <td data-label={t.cDistrict}>{m.district}</td>
+              <td data-label="₹/q" className="num">₹{m.modal}</td>
+              <td data-label={t.cDate}>
+                {date}
+                {stale && <span className="badge old" style={{ marginLeft: 6 }}>{t.olderThan48}</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

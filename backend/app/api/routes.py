@@ -1,6 +1,9 @@
+import asyncio
 import json
 import logging
 import secrets
+from datetime import datetime, timezone
+from typing import Literal
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 
@@ -20,7 +23,7 @@ from app.llm import tts
 from app.llm.client import get_llm
 from app.memory.chats import CHAT_ID, get_chats, owner_key
 from app.memory.store import KNOWLEDGE, MEMORY, get_store
-from app.tools import PlaceNotFound
+from app.tools import NeedsInput, PlaceNotFound
 from app.tools.reverse_geo import locate
 
 router = APIRouter(prefix="/api")
@@ -273,6 +276,40 @@ def auth_logout():
     return res
 
 
+DASHBOARD_TOOLS = ("weather", "mandi", "rain_history", "soil")
+
+
+@router.get("/dashboard")
+async def dashboard(request: Request, place: str = "", crop: str = "Onion"):
+    """Home-screen numbers: the same live tools and UI cards the advisory uses, one section per source.
+    A source that fails is reported as unavailable with no cards, never filled in."""
+    enforce(request, "dashboard")
+    place, crop = place.strip()[:100], crop.strip()[:60]
+    now = datetime.now(timezone.utc).isoformat()
+    if not place:
+        return {"place": "", "crop": crop, "generated_at": now, "sections": {}}
+    d = get_orchestrator().domain
+    profile = {"place": place, "crop": crop}
+    timeout = get_settings().tool_timeout_s * 2
+
+    async def one(name: str):
+        if name not in d.tools:
+            return name, {"ok": False, "cards": [], "sources": [], "error": "not configured"}
+        try:
+            r = await asyncio.wait_for(run_in_threadpool(d.tools[name], "", profile), timeout)
+        except NeedsInput as e:
+            return name, {"ok": False, "cards": [], "sources": [], "error": f"needs {e.field}"}
+        except Exception as e:  # never let one source take the whole dashboard down
+            log.warning("dashboard %s failed: %s", name, type(e).__name__)
+            return name, {"ok": False, "cards": [], "sources": [], "error": "source unavailable"}
+        if not r.ok:
+            return name, {"ok": False, "cards": [], "sources": r.sources, "error": "source unavailable"}
+        return name, {"ok": True, "cards": r.cards, "sources": r.sources, "error": None}
+
+    results = await asyncio.gather(*(one(n) for n in DASHBOARD_TOOLS))
+    return {"place": place, "crop": crop, "generated_at": now, "sections": dict(results)}
+
+
 @router.get("/live-check")
 def live_check(request: Request, place: str = "Nashik, Maharashtra", crop: str = "Onion"):
     """Calls each live tool once and reports ok/source/first line. Use before every demo."""
@@ -448,7 +485,7 @@ def public_accountability_board():
 # ----------------------------------------------------------------------
 # PILLAR 3: AUTONOMOUS FILING AGENT & CRYPTOGRAPHIC RECEIPTS
 # ----------------------------------------------------------------------
-from app.executor.runner import FilingRunner
+from app.executor.runner import FilingRunner, submit_gate
 from app.executor.receipts import verify_receipt, get_public_key_b64
 
 class AgentFileIn(BaseModel):
@@ -498,4 +535,21 @@ async def run_filing_agent(body: AgentFileIn, request: Request):
             yield f"data: {json.dumps({'type': 'final', 'status': 'failed', 'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+class GateIn(BaseModel):
+    gate: Literal["otp", "approve"]
+    value: str | bool
+
+@router.post("/agent/file/{task_id}/gate")
+def answer_filing_gate(task_id: str, body: GateIn, request: Request):
+    """The farmer's answer to a paused filing: the OTP (gate=otp, value=code) or approve/decline (gate=approve, value=true/false)."""
+    enforce(request, "agent-file")
+    if body.gate == "otp" and not isinstance(body.value, str):
+        raise HTTPException(422, "OTP must be a string")
+    if body.gate == "approve" and not isinstance(body.value, bool):
+        raise HTTPException(422, "approve must be true or false")
+    if not submit_gate(task_id, body.gate, body.value):
+        raise HTTPException(404, "No filing is waiting for this answer")
+    return {"ok": True}
 

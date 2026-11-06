@@ -98,7 +98,7 @@ export default function GrievanceForm({ lang, profile, onGoToBoard }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", margin: "16px 0" }}>
             <div style={{ background: "#101820", padding: "12px", borderRadius: "10px", border: "1px solid var(--line)" }}>
               <span style={{ fontSize: "11px", color: "var(--muted)", textTransform: "uppercase" }}>Deterministic Triage</span>
-              <div style={{ fontSize: "16px", fontWeight: "700", color: submittedReport.urgency === "P1" ? "#ff5d5d" : submittedReport.urgency === "P2" ? "#ff9933" : "#7cc4ff", marginTop: "4px" }}>
+              <div style={{ fontSize: "16px", fontWeight: "700", color: submittedReport.urgency === "P1" ? "var(--bad)" : submittedReport.urgency === "P2" ? "#ff9933" : "#7cc4ff", marginTop: "4px" }}>
                 🚨 {submittedReport.urgency} ({submittedReport.urgency === "P1" ? "CRITICAL PRIORITY" : submittedReport.urgency === "P2" ? "HIGH PRIORITY" : "STANDARD"})
               </div>
             </div>

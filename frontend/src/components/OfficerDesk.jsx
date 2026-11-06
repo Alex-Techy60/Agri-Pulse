@@ -259,7 +259,10 @@ export default function OfficerDesk({ lang, onGoToBoard }) {
                     {selectedReport.resolution_notes}
                   </div>
                   <div style={{ fontSize: "11px", color: "var(--muted)", marginBottom: "14px" }}>
-                    Proof Document: <code style={{ color: "#7cc4ff" }}>{selectedReport.resolution_proof_url}</code>
+                    Proof Document:{" "}
+                    {selectedReport.resolution_proof_url
+                      ? <code style={{ color: "#7cc4ff" }}>{selectedReport.resolution_proof_url}</code>
+                      : <span style={{ color: "var(--warn, #f5b041)" }}>No proof photo attached</span>}
                   </div>
 
                   {/* Citizen Feedback simulation */}

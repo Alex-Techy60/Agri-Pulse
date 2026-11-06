@@ -23,8 +23,7 @@ def test_crisis_triage_urgency():
 
 def test_grievance_store_and_board():
     board = grievance_store.get_board_stats()
-    assert board["total_reports"] >= 4
-    assert len(board["hotspots"]) >= 4
+    assert board["total_reports"] == len(board["hotspots"])  # no seeded or invented tickets
     assert "categories" in board
 
     # Create new report
@@ -43,4 +42,4 @@ def test_grievance_store_and_board():
     # Resolve report
     res = grievance_store.resolve_report(rep.id, "Dr. Kulkarni (DAO)", "Inspected survey no 84. Panchnama submitted for PMFBY compensation.")
     assert res.status == "RESOLVED"
-    assert res.resolution_proof_url is not None
+    assert res.resolution_proof_url is None  # no proof photo supplied, so none is invented

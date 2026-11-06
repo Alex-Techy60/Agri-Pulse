@@ -11,6 +11,7 @@ export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak
   const t = uiText(lang);
   const [copied, setCopied] = useState(false);
   const bot = m.role === "bot";
+  const corrected = bot && Array.isArray(m.meta?.trace) && m.meta.trace.some((st) => st?.agent === "Guardrail" && st?.action === "REJECTED");
   // The AI was down and the text is the raw live data: lead with the cards and fold the text, but only if there are cards to lead with.
   const folded = bot && m.meta?.live_only && Array.isArray(m.meta.cards) && m.meta.cards.some((c) => c && c.type);
 
@@ -36,6 +37,7 @@ export default function Message({ m, lang, grouped, onRetry, speakingId, onSpeak
             </>
           )}
           <Sources list={m.meta?.live_sources} lang={lang} />
+          {corrected && <p className="correction-note" role="note">✓ {t.fixed}</p>}
           {m.meta?.integrity_digest && <AdvisoryReceipt digest={m.meta.integrity_digest} lang={lang} />}
           {!folded && m.meta?.sources?.length > 0 && <small>{t.docs}: {m.meta.sources.join(", ")}</small>}
           {m.meta?.degraded && <small className="warn note">⚠ {t.degraded}</small>}

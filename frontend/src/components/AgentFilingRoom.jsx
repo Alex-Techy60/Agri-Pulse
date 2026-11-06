@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { runAgentFiling, verifyReceipt } from "../api.js";
+import { answerFilingGate, runAgentFiling, verifyReceipt } from "../api.js";
 import { uiText } from "../i18n.js";
 
 export default function AgentFilingRoom({ lang }) {
@@ -15,6 +15,13 @@ export default function AgentFilingRoom({ lang }) {
   const [finalResult, setFinalResult] = useState(null);
   const [verification, setVerification] = useState(null);
   const [verifying, setVerifying] = useState(false);
+  const [taskId, setTaskId] = useState(null);
+  const [otpInput, setOtpInput] = useState("");
+  const [gateError, setGateError] = useState("");
+  const [gateBusy, setGateBusy] = useState(false);
+  const lastStatus = steps[steps.length - 1]?.status;
+  const waitingOtp = running && lastStatus === "awaiting_human";
+  const waitingApproval = running && lastStatus === "awaiting_approval";
 
   const applyPreset = (p) => {
     setMobile(p.mobile);
@@ -30,9 +37,15 @@ export default function AgentFilingRoom({ lang }) {
     setSteps([]);
     setFinalResult(null);
     setVerification(null);
+    setGateError("");
+    setOtpInput("");
+    // The browser names the filing so it can answer its OTP and approval gates.
+    const newTaskId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    setTaskId(newTaskId);
 
     try {
       const payload = {
+        task_id: newTaskId,
         mobile,
         crop,
         district,
@@ -51,6 +64,19 @@ export default function AgentFilingRoom({ lang }) {
       ]);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const answerGate = async (gate, value) => {
+    setGateBusy(true);
+    setGateError("");
+    try {
+      await answerFilingGate(taskId, gate, value);
+      if (gate === "otp") setOtpInput("");
+    } catch (err) {
+      setGateError(err.message);
+    } finally {
+      setGateBusy(false);
     }
   };
 
@@ -220,6 +246,9 @@ export default function AgentFilingRoom({ lang }) {
             </span>
           </div>
 
+          {gateError && (
+            <div role="alert" style={{ color: "#ff9b9b", fontSize: "12px", marginBottom: "8px" }}>{gateError}</div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontFamily: "var(--font-mono)", fontSize: "12px" }}>
             {steps.map((st, i) => {
               const isApproval = st.status === "awaiting_approval";
@@ -245,13 +274,41 @@ export default function AgentFilingRoom({ lang }) {
                     {st.message}
                   </div>
                   {isHuman && (
-                    <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--accent)" }}>
-                      🔐 Human Handoff: Test Sandbox Portal OTP <b>123456</b> received and passed automatically.
+                    <div style={{ marginTop: "8px", fontSize: "12px", color: "var(--accent)" }}>
+                      🔐 Enter the OTP the portal sent to the farmer's mobile. Sandbox test OTP: <b>123456</b>
+                      {waitingOtp && (
+                        <form
+                          onSubmit={(e) => { e.preventDefault(); if (otpInput.trim()) answerGate("otp", otpInput.trim()); }}
+                          style={{ display: "flex", gap: "8px", marginTop: "6px" }}
+                        >
+                          <input
+                            aria-label="OTP"
+                            inputMode="numeric"
+                            maxLength={6}
+                            value={otpInput}
+                            onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ""))}
+                            style={{ width: "120px", padding: "6px", fontFamily: "var(--font-mono)" }}
+                          />
+                          <button type="submit" disabled={gateBusy || otpInput.length !== 6} style={{ minHeight: "36px" }}>
+                            Submit OTP
+                          </button>
+                        </form>
+                      )}
                     </div>
                   )}
                   {isApproval && (
-                    <div style={{ marginTop: "4px", fontSize: "11px", color: "#7cc4ff" }}>
-                      🛡️ Citizen Pre-Submit Safety Gate: Review completed before final irreversible commit.
+                    <div style={{ marginTop: "8px", fontSize: "12px", color: "#7cc4ff" }}>
+                      🛡️ Farmer approval needed before the irreversible submission.
+                      {waitingApproval && (
+                        <div style={{ display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+                          <button type="button" disabled={gateBusy} onClick={() => answerGate("approve", true)} style={{ minHeight: "44px" }}>
+                            Approve and submit
+                          </button>
+                          <button type="button" disabled={gateBusy} onClick={() => answerGate("approve", false)} style={{ minHeight: "44px" }}>
+                            Decline, do not submit
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

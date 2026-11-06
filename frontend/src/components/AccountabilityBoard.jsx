@@ -92,7 +92,7 @@ export default function AccountabilityBoard({ lang, onReportNew, onOpenOfficerDe
 
             <div style={{ background: "#101820", padding: "12px", borderRadius: "10px", border: "1px solid #6a2a2a" }}>
               <span style={{ fontSize: "11px", color: "#ff9b9b", textTransform: "uppercase" }}>Critical P1 Active</span>
-              <div style={{ fontSize: "24px", fontWeight: "800", color: "#ff5d5d", marginTop: "4px" }}>
+              <div style={{ fontSize: "24px", fontWeight: "800", color: "var(--bad)", marginTop: "4px" }}>
                 {stats.open_critical_p1}
               </div>
             </div>
@@ -243,7 +243,7 @@ export default function AccountabilityBoard({ lang, onReportNew, onOpenOfficerDe
                           fontSize: "11px",
                           fontWeight: "700",
                           background: isResolved ? "#12331f" : isDisputed ? "#3a1b1b" : "#1f2a37",
-                          color: isResolved ? "var(--ok)" : isDisputed ? "#ff5d5d" : "var(--text)",
+                          color: isResolved ? "var(--ok)" : isDisputed ? "var(--bad)" : "var(--text)",
                         }}>
                           {isResolved ? "✓ RESOLVED" : isDisputed ? "⚠ DISPUTED" : r.status}
                         </span>

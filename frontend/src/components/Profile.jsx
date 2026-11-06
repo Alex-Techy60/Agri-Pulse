@@ -3,6 +3,14 @@ import { suggestPlaces } from "../api.js";
 import { uiText } from "../i18n.js";
 
 const MIN_CHARS = 3;
+// One-tap crop choices, each named in the crop's own script. The value is the English name the tools understand.
+const CROPS = [
+  { en: "Onion", label: "Onion (कांदा)" },
+  { en: "Soybean", label: "Soybean (सोयाबीन)" },
+  { en: "Cotton", label: "Cotton (कापूस)" },
+  { en: "Tomato", label: "Tomato (टोमॅटो)" },
+  { en: "Wheat", label: "Wheat (गहू)" },
+];
 
 // Place and crop: the two things every answer needs. Suggestions come from the same keyless geocoder the server uses.
 export default function Profile({ fields, profile, onChange, lang, onLocate, locating }) {
@@ -37,6 +45,17 @@ export default function Profile({ fields, profile, onChange, lang, onLocate, loc
             {f.key === "place" && <button type="button" className="loc" onClick={onLocate} disabled={locating}>📍 {locating ? "…" : t.useloc}</button>}
           </label>
         ))}
+        <div className="crop-chips" role="group" aria-label={t.fields?.crop || "Crop"}>
+          {CROPS.map((c) => (
+            <button
+              key={c.en} type="button" aria-pressed={profile.crop === c.en}
+              className={profile.crop === c.en ? "chip on" : "chip"}
+              onClick={() => onChange("crop", c.en)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
       </div>
     </details>
   );

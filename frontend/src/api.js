@@ -162,6 +162,10 @@ export const sendGrievanceFeedback = (id, confirmed) =>
 
 export const getBoardStats = () => fetch("/api/public/board").then(j);
 
+// Live home-screen numbers for one place: {generated_at, sections:{weather,mandi,rain_history,soil}}.
+export const getDashboard = (place, crop) =>
+  fetch(`/api/dashboard?place=${encodeURIComponent(place)}&crop=${encodeURIComponent(crop)}`).then(j);
+
 // --- PILLAR 3: Autonomous Agricultural Filing Agent & Receipts ---
 export async function runAgentFiling(body, onStep) {
   const res = await fetch("/api/agent/file", {
@@ -189,6 +193,17 @@ export async function runAgentFiling(body, onStep) {
     }
   }
   return final;
+}
+
+// The farmer's answer to a paused filing: gate "otp" (value = the code) or "approve" (value = true/false).
+export async function answerFilingGate(taskId, gate, value) {
+  const res = await fetch(`/api/agent/file/${encodeURIComponent(taskId)}/gate`, {
+    method: "POST",
+    headers: who({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ gate, value }),
+  });
+  if (!res.ok) throw new Error(res.status === 404 ? "This filing is no longer waiting for an answer." : `HTTP ${res.status}`);
+  return res.json();
 }
 
 export const verifyReceipt = (receipt) =>

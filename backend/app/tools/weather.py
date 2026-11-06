@@ -94,6 +94,9 @@ def get_weather(profile: dict) -> ToolResult:
         "title": f"7-day forecast - {where}",
         "days": [{"date": d["date"], "tmax": d["tmax"], "tmin": d["tmin"], "rain_mm": d["rain_mm"], "rain_prob": d["rain_prob"]} for d in days],
         "flags": [{"flag": x["flag"], "day": x["day"]} for x in a["flags"]],
+        "spray_ok_days": a["spray_ok_days"],  # deterministic rule from weather_rules: the UI shows it, never recomputes it
+        "rain_next_48h_mm": a["rain_next_48h_mm"],
+        "irrigation": a["irrigation"],
         "soil_moisture": soil,
         "soil_profile": profile,
     }

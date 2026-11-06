@@ -4,11 +4,11 @@
   --panel: #131d27;
   --line: #203144;
   --text: #edf2f7;
-  --muted: #8fa2b8;
+  --muted: #a3b3c6; /* 7:1+ on panel and background (WCAG AAA for body text) */
   --accent: #ff9933;
   --ok: #2ecc71;
-  --bad: #ff5d5d;
-  --font-sans: "Noto Sans", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
+  --bad: #ff8a8a; /* 7:1+ on panel and background */
+  --font-sans: "Noto Sans", "Noto Sans Devanagari", "Noto Sans Gujarati", "Noto Sans Gurmukhi", "Noto Sans Tamil", "Noto Sans Telugu", "Noto Sans Kannada", "Noto Sans Bengali", "Noto Sans Malayalam", system-ui, -apple-system, sans-serif;
   --font-display: "Mukta", "Noto Sans Devanagari", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 }
@@ -369,4 +369,69 @@ textarea:focus-visible, input:focus-visible, select:focus-visible { outline-offs
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ---- Home dashboard (live data only; see FarmerDashboard.jsx) ---- */
+.dash { display:flex; flex-direction:column; gap:16px; padding:16px 0; max-width:1000px; margin:0 auto; width:100%; }
+.dash-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+.dash-head h2 { margin:4px 0 2px; font-size:20px; }
+.dash-kicker { font-size:12px; color:var(--ok); font-weight:700; text-transform:uppercase; }
+.dash-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.dash-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap:14px; }
+.dash-card { min-width:0; }
+.dash-card h3 { margin:0 0 10px; font-size:16px; }
+.dash-head-row { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+.dash-unavail { display:flex; flex-wrap:wrap; gap:8px; align-items:center; border:1px solid var(--bad); border-radius:12px; padding:12px; background:#2a1414; }
+.report-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+.linkbtn { background:none; border:none; color:#7cc4ff; text-decoration:underline; cursor:pointer; min-height:48px; padding:0 4px; }
+
+/* sticky header: stays pinned while scrolling, just below the 4px tricolor bar */
+header { position:sticky; top:4px; z-index:10; background:var(--bg); backdrop-filter:blur(8px); }
+
+/* 48-hour spray and irrigation verdict on the forecast card */
+.spray-window { display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+.pill { display:inline-block; align-self:flex-start; font-size:13px; font-weight:800; padding:6px 12px; border-radius:99px; }
+.pill.ok { background:#12331f; color:var(--ok); }
+.pill.warn { background:#3a2a10; color:var(--accent); }
+
+/* one-tap crop choices in the profile bar: 48px tall, wrap on small screens */
+.crop-chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; width:100%; }
+.chip { min-height:48px; padding:8px 14px; border-radius:99px; border:1px solid var(--line); background:var(--panel); color:var(--text); font-weight:600; }
+.chip.on { background:var(--accent); color:#111; border-color:var(--accent); }
+.correction-note { font-size:13px; color:var(--ok); margin:6px 0 0; }
+.source-status { list-style:none; padding:0; margin:0 0 18px; display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13px; color:var(--text); }
+.source-status .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
+.source-status .dot.ok { background:var(--ok); }
+.source-status .dot.warn { background:var(--accent); }
+
+/* forecast tiles: 7 columns, 4 on tablets, 2 on phones */
+@media (max-width: 480px) { .days { grid-template-columns:repeat(2,1fr); } }
+
+/* mandi prices: sticky header while scrolling, right-aligned prices, alternating rows, stacked card view on phones */
+.mkt-wrap { max-height:320px; overflow:auto; margin-top:6px; border-radius:8px; }
+.mkt { width:100%; border-collapse:collapse; font-size:13px; }
+.mkt thead th { position:sticky; top:0; background:var(--panel); text-align:left; padding:8px; color:var(--muted); font-weight:700; border-bottom:1px solid var(--line); }
+.mkt td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+.mkt tbody tr:nth-child(even) { background:#16212c; }
+.mkt .num { text-align:right; font-variant-numeric:tabular-nums; }
+@media (max-width: 640px) {
+  .mkt thead { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  .mkt, .mkt tbody, .mkt tr, .mkt td { display:block; width:100%; }
+  .mkt tr { border:1px solid var(--line); border-radius:10px; margin-bottom:8px; padding:6px 10px; background:#16212c; }
+  .mkt tbody tr:nth-child(even) { background:#16212c; }
+  .mkt td { border:0; padding:4px 0; display:flex; justify-content:space-between; gap:12px; }
+  .mkt td::before { content:attr(data-label); color:var(--muted); font-size:12px; }
+  .mkt .num { text-align:right; font-size:16px; font-weight:700; }
+}
+
+/* Phone touch targets (WCAG 2.5.5 / 2.5.8): these classes set their own smaller heights, so the phone rule must win here */
+@media (max-width: 800px) {
+  .scale-btn, .fnav-btn, .chip { min-height:48px; }
+  .scale-btn { min-width:48px; font-size:14px; }
+  .fnav-btn { padding:10px 16px; }
+  .chk { min-height:48px; }
+  .chk input[type=checkbox] { width:24px; height:24px; }
+  .hero button, .hero-dots button, button[aria-label^="Show message"] { min-width:48px; min-height:48px; display:inline-flex; align-items:center; justify-content:center; }
+  .hero button[aria-label^="Show message"]::before { content:""; width:12px; height:12px; border-radius:50%; background:var(--muted); }
+  .hero button[aria-label^="Show message"].on::before { background:var(--accent); }
 }

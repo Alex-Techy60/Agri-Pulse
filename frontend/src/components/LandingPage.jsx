@@ -1,7 +1,25 @@
 import { uiText } from "../i18n.js";
 import Logo from "./Logo.jsx";
 
-export default function LandingPage({ lang, onNavigate }) {
+// Status of each live source as the server reports it. "Configured" means the key or data is set up, not that a
+// call succeeded right now: the dashboard and advisory show whether each source actually answers.
+function SourceStatus({ health, t }) {
+  if (!health) return null;
+  const rows = [
+    [t.lsAi, health.llm_configured ? t.lsAiOn : t.lsAiOff, !!health.llm_configured],
+    [t.lsMandi, health.mandi_key_configured ? t.lsKey : t.lsNoKey, !!health.mandi_key_configured],
+    [t.lsDocs, t.lsLoaded(health.knowledge_chunks ?? 0), (health.knowledge_chunks ?? 0) > 0],
+  ];
+  return (
+    <ul className="source-status" aria-label={t.lsTitle}>
+      {rows.map(([name, text, ok]) => (
+        <li key={name}><span className={`dot ${ok ? "ok" : "warn"}`} aria-hidden="true" /> <strong>{name}:</strong> {text}</li>
+      ))}
+    </ul>
+  );
+}
+
+export default function LandingPage({ lang, onNavigate, health }) {
   const t = uiText(lang);
 
   return (
@@ -31,6 +49,8 @@ export default function LandingPage({ lang, onNavigate }) {
           <p style={{ fontSize: "16px", color: "#cbd5e1", maxWidth: "750px", lineHeight: "1.6", margin: "14px 0 24px" }}>
             Smallholder farmers cannot afford hallucinations. KisaanMitra turns <b>live Open-Meteo weather</b>, <b>3-depth soil moisture</b>, and <b>data.gov.in Agmarknet mandi trends</b> into deterministic sell/hold decisions, verified government scheme policies, public crisis accountability, and autonomous tamper-evident filings — in 10 Indian languages with voice.
           </p>
+
+          <SourceStatus health={health} t={t} />
 
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
             <button

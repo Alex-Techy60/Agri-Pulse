@@ -334,7 +334,7 @@ def _crop_prices(profile: dict, loc: dict, commodity: str) -> ToolResult:
     if top:
         lines.append(f"HIGHEST MARKETS in {where} on {latest_date}: " + "; ".join(f"{m['market']} ({m['district']}) Rs {m['modal']:.0f}" for m in top))
 
-    card = {"type": "prices", "title": f"{commodity} - mandi prices, {where}", "unit": "Rs/quintal", "series": series, "markets": (own + [m for m in near if m not in own] + [m for m in top if m not in own and m not in near])[:5], "signal": sig, "position": position, "own_market": own}
+    card = {"type": "prices", "title": f"{commodity} - mandi prices, {where}", "unit": "Rs/quintal", "latest_date": latest_date, "series": series, "markets": (own + [m for m in near if m not in own] + [m for m in top if m not in own and m not in near])[:5], "signal": sig, "position": position, "own_market": own}
     return ToolResult("\n".join(lines), True, sources, [card], {"location": {k: loc[k] for k in ("name", "state", "district", "lat", "lon")}, "price": sig, "commodity": commodity, "position": position, "own_market": own})
 
 

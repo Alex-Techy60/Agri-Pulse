@@ -1,5 +1,5 @@
-// Original KisaanMitra brand mark: golden sunrise, resilient crop sprout, and live digital decision pulse.
-// Role="img" with accessible aria-label; crisp at 16px to 64px.
+// KisaanMitra mark (Step 7.4): a seedling coming up out of a protective shield.
+// Pure vector, so it stays sharp from 16px to 120px. Colours: saffron shoot tip, emerald foliage, navy shield outline.
 export default function Logo({ size = 28, className = "" }) {
   return (
     <svg
@@ -12,35 +12,16 @@ export default function Logo({ size = 28, className = "" }) {
       role="img"
       aria-label="KisaanMitra logo"
     >
-      {/* Background circle badge */}
-      <circle cx="24" cy="24" r="22" fill="#13231B" stroke="#254B35" strokeWidth="2" />
-      {/* Golden dawn / sun rays */}
-      <circle cx="24" cy="18" r="7" fill="#E67E22" opacity="0.9" />
-      <path d="M24 6v3M33 9l-2 2M15 9l2 2" stroke="#F39C12" strokeWidth="2" strokeLinecap="round" />
-      {/* Resilient crop leaves */}
-      <path
-        d="M24 38c0-8-6-14-11-13 1 6 5 12 11 13z"
-        fill="#27AE60"
-        stroke="#1E8449"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M24 38c0-8 6-14 11-13-1 6-5 12-11 13z"
-        fill="#2ECC71"
-        stroke="#27AE60"
-        strokeWidth="1.5"
-      />
-      {/* Central stem */}
-      <path d="M24 38V21" stroke="#A9DFBF" strokeWidth="2.5" strokeLinecap="round" />
-      {/* Live decision pulse / heartbeat */}
-      <path
-        d="M10 27h6l2.5-4 4 8 3.5-6 3 2h9"
-        stroke="#FFFFFF"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.85"
-      />
+      {/* Shield: the protective contour */}
+      <path d="M24 3 L42 9 V23 C42 34 34 41 24 45 C14 41 6 34 6 23 V9 Z" fill="#131d27" stroke="#1e293b" strokeWidth="2" strokeLinejoin="round" />
+      {/* Stem */}
+      <path d="M24 39 V21" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" />
+      {/* Left leaf */}
+      <path d="M24 26 C20 26 15 23 14 17 C19 17 23 20 24 26 Z" fill="#16a34a" />
+      {/* Right leaf */}
+      <path d="M24 22 C24 16 28 12 34 12 C34 18 30 22 24 22 Z" fill="#22c55e" />
+      {/* Saffron shoot tip */}
+      <circle cx="24" cy="19" r="2.2" fill="#ff9933" />
     </svg>
   );
 }

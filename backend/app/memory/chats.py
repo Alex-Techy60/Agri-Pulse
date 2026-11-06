@@ -123,6 +123,7 @@ class ChatStore:
                 yield _PgConn(conn)
             return
         db = sqlite3.connect(self.path, timeout=5)
+        db.execute("PRAGMA journal_mode=WAL")  # readers don't block the writer during a live demo
         db.row_factory = sqlite3.Row
         try:
             with db:
